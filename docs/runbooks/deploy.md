@@ -60,7 +60,62 @@ kubectl get pods -n kube-system
 
 Expect 2 nodes `Ready` (t3.medium, no external IP) and every kube-system pod `Running`.
 
-## 4. End of session
+## 4. Install Argo CD and the root app (owner)
+
+Argo CD is installed once per cluster with Helm, then manages everything else from git ([ADR 0011](../decisions/0011-argocd-install-by-helm.md)). Run from the repo root with `kubectl` pointed at the dev cluster.
+
+**Before the first install:** create a Slack app with a bot token (`xoxb-...`, scope `chat:write`), invite it to `#alerts`, and store the token in Doppler as `SLACK_ARGOCD_BOT_TOKEN`.
+
+1. Create the namespace and the Slack secret. The token goes from Doppler to `kubectl` through a pipe, so it never appears in your terminal, shell history or the process list. Run it from a directory whose `doppler setup` points at the config that holds the token (or add `-p <project> -c <config>`):
+
+   ```
+   kubectl create namespace argocd
+   doppler run --only-secrets SLACK_ARGOCD_BOT_TOKEN -- sh -c 'printf %s "$SLACK_ARGOCD_BOT_TOKEN" | kubectl -n argocd create secret generic argocd-notifications-secret --from-file=slack-token=/dev/stdin'
+   ```
+
+2. Install the pinned chart:
+
+   ```
+   helm repo add argo https://argoproj.github.io/argo-helm
+   helm install argocd argo/argo-cd --version 10.9.6 -n argocd -f argocd/values.yaml
+   kubectl -n argocd get pods
+   ```
+
+   Expect every pod `Running` (no Dex pod: SSO is off).
+
+3. Confirm nothing is exposed. Both must show no `LoadBalancer` or `NodePort` service and no Ingress:
+
+   ```
+   kubectl -n argocd get svc
+   kubectl -n argocd get ingress
+   ```
+
+4. Log in. The initial admin password goes straight to your clipboard and is never printed (macOS shown; on Linux use `wl-copy` or `xclip -selection clipboard`). Don't paste it anywhere but the login form:
+
+   ```
+   kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d | pbcopy
+   kubectl port-forward svc/argocd-server -n argocd 8080:443
+   ```
+
+   Open https://localhost:8080 (accept the self-signed certificate) and log in as `admin`.
+
+5. Rotate the password: in the UI, User Info > Update Password, and keep the new one in Doppler. Then delete the initial secret, which Argo CD no longer needs:
+
+   ```
+   kubectl -n argocd delete secret argocd-initial-admin-secret
+   ```
+
+6. Bootstrap the app-of-apps. The `bootstrap` project limits the root app to creating Applications and AppProjects in `argocd`:
+
+   ```
+   kubectl apply -f argocd/bootstrap-project.yaml -f argocd/root.yaml
+   kubectl -n argocd get applications
+   kubectl -n argocd get appprojects
+   ```
+
+   Expect `root` as `Synced` and `Healthy`, and the projects `bootstrap`, `aws-platform` and `default`.
+
+## 5. End of session
 
 The environment costs roughly $6-7 a day while it runs, so destroy it when you finish. Review the destroy plan first:
 
