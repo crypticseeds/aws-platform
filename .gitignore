@@ -63,8 +63,12 @@ tfplan*
 !.env.example
 kubeconfig*
 
-# Local agent settings (the shared .claude/settings.json is committed)
+# Agent permission files: generated per machine by ~/dotfiles/templates/agent-permissions
+# (generate.py --install), never committed. Mac and the Pi need different rules.
+.claude/settings.json
 .claude/settings.local.json
+opencode.json
+.omp/
 .claude/.cc-writes/
 
 # OS noise
