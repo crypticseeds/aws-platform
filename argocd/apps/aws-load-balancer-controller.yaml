@@ -49,6 +49,10 @@ spec:
           ManagedBy: aws-load-balancer-controller
           Repository: github.com/crypticseeds/aws-platform
 
+        # Only Ingresses create AWS load balancers. With the webhook on, any
+        # `type: LoadBalancer` Service would silently get a paid NLB.
+        enableServiceMutatorWebhook: false
+
         replicaCount: 2
         podDisruptionBudget:
           maxUnavailable: 1
