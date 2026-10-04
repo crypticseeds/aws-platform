@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenySecretValues",
+      "Effect": "Deny",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "kms:Decrypt",
+        "rds:DownloadDBLogFilePortion",
+        "rds:DownloadCompleteDBLogFile"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyTerraformStateContents",
+      "Effect": "Deny",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": "arn:aws:s3:::*tfstate*/*"
+    }
+  ]
+}
