@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "promscope.fullname" . }}
+  labels:
+    {{- include "promscope.labels" . | nindent 4 }}
+spec:
+  # ClusterIP only: no authentication, so never exposed outside the cluster.
+  type: ClusterIP
+  selector:
+    {{- include "promscope.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http
