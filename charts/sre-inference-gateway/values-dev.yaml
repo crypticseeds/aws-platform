@@ -1,0 +1,41 @@
+# Dev environment. Only the mock providers are enabled: no LLM API keys exist
+# anywhere in this deployment.
+#
+# image.repository and image.tag are set when the first image is built
+# (DEV-137); until then rendering fails on purpose.
+
+ingress:
+  enabled: true
+  groupName: aws-platform-dev
+  annotations:
+    # Streaming (SSE) responses keep the connection open between chunks. The
+    # ALB closes a connection after idle_timeout seconds with no data. The
+    # gateway's own request timeout is 35s, so 60s (the ALB default) would be
+    # enough today; 120s leaves room for slower real providers later.
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=120
+
+serviceMonitor:
+  enabled: true
+
+config:
+  providers:
+    - name: "mock_openai"
+      type: "mock"
+      model: "mock-model"
+      weight: 0.5
+      enabled: true
+      health_check_url: null
+      timeout: 30.0
+      max_retries: 3
+      stream_chunk_delay: 0.05
+      stream_content_chunks: 3
+    - name: "mock_vllm"
+      type: "mock"
+      model: "mock-model"
+      weight: 0.5
+      enabled: true
+      health_check_url: null
+      timeout: 30.0
+      max_retries: 3
+      stream_chunk_delay: 0.05
+      stream_content_chunks: 3
