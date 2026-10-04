@@ -1,0 +1,116 @@
+# Defaults for every environment. Environment files (values-dev.yaml) override.
+
+replicaCount: 2
+
+image:
+  # Both required: rendering fails until a real Docker Hub repository and a
+  # git SHA tag are set. "latest" is rejected. Quote the tag: an unquoted
+  # all-digit SHA would be read as a number, so the chart refuses it.
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# The Secret is created by the owner from Doppler and referenced by name only.
+# This chart never creates it.
+imagePullSecrets:
+  - name: dockerhub-pull
+
+# Must match the numeric USER in the gateway image (DEV-162).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Sized for 2x t3.medium nodes shared with the platform add-ons.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+service:
+  type: ClusterIP
+  port: 8000
+  metricsPort: 9090
+
+probes:
+  path: /v1/health
+  liveness:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+ingress:
+  enabled: false
+  className: alb
+  # Every app Ingress on the platform joins this group, so one ALB serves all.
+  groupName: ""
+  path: /
+  annotations: {}
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Rendered into /app/config.yaml (the image does not contain one). See the
+# gateway repo's config.yaml for every option. providers is empty here on
+# purpose: each environment chooses its own.
+config:
+  version: "0.1.0"
+  server:
+    host: "0.0.0.0"
+    port: 8000
+    debug: false
+  providers: []
+  health:
+    check_interval: 30.0
+    timeout: 5.0
+    retries: 3
+  logging:
+    level: "INFO"
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  metrics:
+    enabled: true
+    port: 9090
+  load_shedding:
+    enabled: true
+    global_max_in_flight: 200
+    per_provider_max_in_flight: 100
+  pricing:
+    mock-model:
+      input_per_1m: 0.15
+      output_per_1m: 0.60
+  max_request_size: 1048576
+  request_timeout: 35.0
+  resilience:
+    circuit_breaker:
+      failure_threshold: 2
+      recovery_timeout: 5.0
+      expected_exception: "Exception"
+    retry:
+      max_attempts: 1
+      min_wait: 1.0
+      max_wait: 10.0
+      exponential_base: 2.0
+      jitter: true
