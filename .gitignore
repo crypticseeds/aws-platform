@@ -42,3 +42,30 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+
+# --- aws-platform additions (public repo safety, handoff section 7) ---
+
+# Example tfvars are committed with placeholder values only
+!*.tfvars.example
+
+# Provider lock files belong to root configurations only, not reusable modules
+modules/**/.terraform.lock.hcl
+
+# Saved plans can contain sensitive values
+*.tfplan
+tfplan*
+
+# Keys, certificates, env files, kubeconfigs
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+kubeconfig*
+
+# Local agent settings (the shared .claude/settings.json is committed)
+.claude/settings.local.json
+.claude/.cc-writes/
+
+# OS noise
+.DS_Store

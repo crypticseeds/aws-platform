@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars only if you need to change a default. All variables have safe defaults.
+# region                            = "eu-west-2"
+# state_bucket_prefix               = "aws-platform-tfstate-"
+# noncurrent_version_retention_days = 30

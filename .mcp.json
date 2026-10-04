@@ -1,0 +1,33 @@
+{
+  "mcpServers": {
+    "aws": {
+      "command": "uvx",
+      "args": [
+        "mcp-proxy-for-aws-cli==1.7.0",
+        "https://aws-mcp.eu-west-2.api.aws/mcp",
+        "--profile",
+        "agent-readonly",
+        "--region",
+        "eu-west-2",
+        "--metadata",
+        "AWS_REGION=eu-west-2",
+        "--disable-telemetry"
+      ]
+    },
+    "eks": {
+      "command": "uvx",
+      "args": [
+        "mcp-proxy-for-aws-cli==1.7.0",
+        "https://eks-mcp.eu-west-2.api.aws/mcp",
+        "--service",
+        "eks-mcp",
+        "--profile",
+        "agent-readonly",
+        "--region",
+        "eu-west-2",
+        "--read-only",
+        "--disable-telemetry"
+      ]
+    }
+  }
+}
