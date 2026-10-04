@@ -47,12 +47,15 @@ No secrets are involved, so `doppler run --` is not needed here.
 
 ## Step 1: apply with local state (owner)
 
+`bootstrap/backend.tf` is committed and points at the bucket this repo already created. In a **fresh account** that bucket doesn't exist yet, so `terraform init` would fail. Move the backend file aside for the first apply, so Terraform uses local state. (Files that don't end in `.tf` are ignored by Terraform.)
+
 ```
 aws sso login --profile platform-admin        # shortcut: aws-admin-login
 export AWS_PROFILE=platform-admin
 aws sts get-caller-identity                   # shortcut: aws-admin-identity
 
 cd bootstrap
+mv backend.tf backend.tf.off                  # fresh account only
 terraform init
 terraform plan -out=bootstrap.tfplan
 terraform apply bootstrap.tfplan
@@ -61,14 +64,16 @@ terraform output state_bucket_name
 
 Check before applying: the plan should show **7 to add, 0 to change, 0 to destroy**, and the role in `get-caller-identity` should be `AWSReservedSSO_PlatformAdmin_...`.
 
-Paste the bucket name to the agent. The agent then adds the backend block (step 2).
-
 ## Step 2: move bootstrap state into the bucket (owner)
 
-The agent commits `bootstrap/backend.tf` with the bucket name. Then:
+Put the new bucket name (from `terraform output state_bucket_name`) into **both** backend files, then move the bootstrap one back:
+
+- `bootstrap/backend.tf.off`: `bucket = "<new bucket name>"`, then `mv backend.tf.off backend.tf`
+- `envs/dev/backend.tf`: `bucket = "<new bucket name>"` (and any other root that uses the bucket)
+
+Then, still in `bootstrap/`:
 
 ```
-cd bootstrap
 terraform init -migrate-state
 ```
 
@@ -79,10 +84,10 @@ terraform state list
 terraform plan
 ```
 
-`terraform plan` must print `No changes.` After that, the local `terraform.tfstate` and `terraform.tfstate.backup` files are no longer used. They are git-ignored. The owner deletes them:
+`terraform plan` must print `No changes.` From now on Terraform reads and writes only the copy in S3. The local `terraform.tfstate` (the pre-migration copy) and `terraform.tfstate.backup` (the version before that) are stale. Deleting them changes nothing in AWS or in the S3 state, but leaving them around invites mistakes and keeps copies of possibly sensitive values on disk. They are git-ignored. Still in `bootstrap/`, the owner deletes them (`-f`: no error if one is already gone):
 
 ```
-rm bootstrap/terraform.tfstate bootstrap/terraform.tfstate.backup
+rm -f terraform.tfstate terraform.tfstate.backup
 ```
 
 Finish the session:

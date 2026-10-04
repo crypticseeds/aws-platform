@@ -337,7 +337,7 @@ Run through the MCP server's `run_script` with the agent profile on 2026-10-02:
 | `sts:GetCallerIdentity` | `assumed-role/AWSReservedSSO_AgentReadOnly_<id>/seeds-agent` (the agent identity, not the owner's) |
 | `s3:ListBuckets` | Succeeded (1 bucket) |
 | `ec2:DescribeVpcs` in eu-west-2 | Succeeded (1 VPC) |
-| Write denied (`s3:CreateBucket`) | **Not run by the agent.** Claude Code's auto-mode classifier blocked the attempt before it reached AWS, so this is not evidence that IAM denies writes. The proof is the owner's console test: portal > `seeds-agent` > `AgentReadOnly` > S3 > Create bucket, expecting Access Denied. **Result: <owner to fill in>** |
+| Write denied (`s3:CreateBucket`) | **Not run by the agent.** Claude Code's auto-mode classifier blocked the attempt before it reached AWS, so this is not evidence that IAM denies writes. The proof is the owner's console test: portal > `seeds-agent` > `AgentReadOnly` > S3 > Create bucket, expecting Access Denied. **Result: not yet run** (tracked in DEV-129). |
 | CLI identities | `platform-admin` returned `PlatformAdmin/seeds-sso`; `agent-readonly` returned `AgentReadOnly/seeds-agent` |
 
 Not yet verified: that the `kms:Decrypt` and `*tfstate*` denies fire. No secret or state object existed yet to test against. Test them once the state bucket exists.

@@ -216,7 +216,7 @@ The reasons for each are in [Best practices learned](#best-practices-learned).
 A thin wrapper around `terraform-aws-modules/eks/aws` 21.26.0:
 
 - Kubernetes **1.36**: the EKS default on 2026-10-04, in standard support until 2027-08. The newest (1.37) was skipped so add-on charts can catch up.
-- `authentication_mode = "API"`, `enable_cluster_creator_admin_permissions = false`, and one access entry granting `AmazonEKSClusterAdminPolicy` to the `PlatformAdmin` SSO role. The role ARN is rebuilt from the caller identity and the role name, without the `aws-reserved/sso.amazonaws.com/` path that EKS access entries do not accept.
+- `authentication_mode = "API"`, `enable_cluster_creator_admin_permissions = false`, and one access entry granting `AmazonEKSClusterAdminPolicy` to the `PlatformAdmin` SSO role. The role is looked up by name under `/aws-reserved/sso.amazonaws.com/` and its real ARN, path included, is used as-is. Access entries accept paths; only the legacy `aws-auth` ConfigMap did not (see Gotchas).
 - Public endpoint on but limited to `endpoint_public_access_cidrs` (no default; `0.0.0.0/0` rejected by validation); private endpoint on for nodes.
 - `enable_irsa = false` (Pod Identity instead), `create_kms_key = false`, `encryption_config = null` (AWS-owned envelope encryption).
 - Control-plane logs: `audit` and `authenticator`, 7-day retention.

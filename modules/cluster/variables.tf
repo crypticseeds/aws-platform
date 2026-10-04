@@ -22,9 +22,13 @@ variable "endpoint_public_access_cidrs" {
   description = "CIDR ranges allowed to reach the public Kubernetes API endpoint (the owner's IPs). No default on purpose."
   type        = list(string)
 
+  # Every entry must be a single IPv4 address (/32). Rejecting only 0.0.0.0/0 is
+  # not enough: two /1 ranges would also open the endpoint to the whole internet.
   validation {
-    condition     = length(var.endpoint_public_access_cidrs) > 0 && !contains(var.endpoint_public_access_cidrs, "0.0.0.0/0")
-    error_message = "Give at least one CIDR, and not 0.0.0.0/0."
+    condition = length(var.endpoint_public_access_cidrs) > 0 && alltrue([
+      for c in var.endpoint_public_access_cidrs : can(cidrhost(c, 0)) && endswith(c, "/32") && !strcontains(c, ":")
+    ])
+    error_message = "Give at least one CIDR, each a single IPv4 address as /32, e.g. [\"203.0.113.10/32\"]."
   }
 }
 
