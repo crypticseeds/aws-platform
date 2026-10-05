@@ -1,5 +1,10 @@
 extends: default
 
+# Helm templates are Go templates, not YAML. CI validates them by rendering
+# (helm lint + kubeconform) instead.
+ignore: |
+  charts/*/templates/
+
 rules:
   document-start: disable
   line-length:
