@@ -190,7 +190,7 @@ terraform destroy
 
 Then log out the admin (see [bootstrap.md](bootstrap.md#step-2-move-bootstrap-state-into-the-bucket-owner) for the standard and shortcut commands).
 
-The full teardown order, needed once Argo CD and the Load Balancer Controller create resources outside Terraform, is in `teardown.md` (DEV-145).
+The full teardown order, needed once Argo CD and the Load Balancer Controller create resources outside Terraform, is in [teardown.md](teardown.md).
 
 ## Verification (agent, read-only MCP)
 
