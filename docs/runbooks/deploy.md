@@ -60,7 +60,126 @@ kubectl get pods -n kube-system
 
 Expect 2 nodes `Ready` (t3.medium, no external IP) and every kube-system pod `Running`.
 
-## 4. End of session
+## 4. Install Argo CD and the root app (owner)
+
+Argo CD is installed once per cluster with Helm, then manages everything else from git ([ADR 0011](../decisions/0011-argocd-install-by-helm.md)). Run from the repo root with `kubectl` pointed at the dev cluster.
+
+**Before the first install:** create a Slack app with a bot token (`xoxb-...`, scope `chat:write`), invite it to `#alerts`, and store the token in Doppler as `SLACK_ARGOCD_BOT_TOKEN`.
+
+1. Create the namespace and the Slack secret. The token goes from Doppler to `kubectl` through a pipe, so it never appears in your terminal, shell history or the process list. Run it from a directory whose `doppler setup` points at the config that holds the token (or add `-p <project> -c <config>`):
+
+   ```
+   kubectl create namespace argocd
+   doppler run --only-secrets SLACK_ARGOCD_BOT_TOKEN -- sh -c 'printf %s "$SLACK_ARGOCD_BOT_TOKEN" | kubectl -n argocd create secret generic argocd-notifications-secret --from-file=slack-token=/dev/stdin'
+   ```
+
+2. Install the pinned chart:
+
+   ```
+   helm repo add argo https://argoproj.github.io/argo-helm
+   helm install argocd argo/argo-cd --version 10.9.6 -n argocd -f argocd/values.yaml
+   kubectl -n argocd get pods
+   ```
+
+   Expect every pod `Running` (no Dex pod: SSO is off).
+
+3. Confirm nothing is exposed. Both must show no `LoadBalancer` or `NodePort` service and no Ingress:
+
+   ```
+   kubectl -n argocd get svc
+   kubectl -n argocd get ingress
+   ```
+
+4. Log in. The initial admin password goes straight to your clipboard and is never printed (macOS shown; on Linux use `wl-copy` or `xclip -selection clipboard`). Don't paste it anywhere but the login form:
+
+   ```
+   kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d | pbcopy
+   kubectl port-forward svc/argocd-server -n argocd 8080:443
+   ```
+
+   Open https://localhost:8080 (accept the self-signed certificate) and log in as `admin`.
+
+5. Rotate the password: in the UI, User Info > Update Password, and keep the new one in Doppler. Then delete the initial secret, which Argo CD no longer needs:
+
+   ```
+   kubectl -n argocd delete secret argocd-initial-admin-secret
+   ```
+
+6. Bootstrap the app-of-apps. The `bootstrap` project limits the root app to creating Applications and AppProjects in `argocd`:
+
+   ```
+   kubectl apply -f argocd/bootstrap-project.yaml -f argocd/root.yaml
+   kubectl -n argocd get applications
+   kubectl -n argocd get appprojects
+   ```
+
+   Expect `root` as `Synced` and `Healthy`, and the projects `bootstrap`, `aws-platform` and `default`.
+
+## 5. Platform add-ons (owner)
+
+The root app creates two add-on Applications from `argocd/apps/`: the AWS Load Balancer Controller (`kube-system`, sync wave -2) and kube-prometheus-stack (`monitoring`, wave -1). Apps come after them (wave 0).
+
+The controller's IAM role and its Pod Identity association are part of `envs/dev`, so step 2's apply already created them. Nothing to do for the controller.
+
+**Before the first install:** store the Grafana admin login in Doppler as `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`.
+
+1. Create the Grafana admin Secret before Argo CD syncs kube-prometheus-stack (otherwise Grafana waits in `CreateContainerConfigError` until it exists). Both values go from Doppler to `kubectl` through stdin, so they never appear in your terminal, shell history or the process list. Run it where `doppler setup` points at the config with the secrets (or add `-p <project> -c <config>`):
+
+   ```
+   kubectl create namespace monitoring
+   doppler run --only-secrets GRAFANA_ADMIN_USER,GRAFANA_ADMIN_PASSWORD -- sh -c 'printf "admin-user=%s\nadmin-password=%s\n" "$GRAFANA_ADMIN_USER" "$GRAFANA_ADMIN_PASSWORD" | kubectl -n monitoring create secret generic grafana-admin --from-env-file=/dev/stdin'
+   ```
+
+   `printf` is a shell builtin, so the values are not in any process's arguments either. `describe` shows only the key names and sizes:
+
+   ```
+   kubectl -n monitoring describe secret grafana-admin
+   ```
+
+   Expect the keys `admin-user` and `admin-password`.
+
+2. Watch both add-ons sync:
+
+   ```
+   kubectl -n argocd get applications
+   ```
+
+   Expect `aws-load-balancer-controller` and `kube-prometheus-stack` both `Synced` and `Healthy`.
+
+3. The controller must have its AWS permissions. Both pods `Running`, and no AccessDenied in its first 5 minutes of logs:
+
+   ```
+   kubectl -n kube-system get pods -l app.kubernetes.io/name=aws-load-balancer-controller
+   kubectl -n kube-system logs -l app.kubernetes.io/name=aws-load-balancer-controller --since=5m --tail=-1 | grep -ci accessdenied
+   ```
+
+   Expect `0`.
+
+4. Nothing in monitoring is exposed:
+
+   ```
+   kubectl get svc -A | grep -E 'grafana|prometheus|alertmanager'
+   ```
+
+   Every line must be `ClusterIP`, none `LoadBalancer` or `NodePort`.
+
+5. Log in to Grafana over port-forward with the Doppler credentials:
+
+   ```
+   kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
+   ```
+
+   Open http://localhost:3000. Prometheus and Alertmanager work the same way when needed (`svc/kube-prometheus-stack-prometheus 9090:9090`, `svc/kube-prometheus-stack-alertmanager 9093:9093`).
+
+6. Record node headroom with both add-ons running (the "before" number for P4):
+
+   ```
+   kubectl top nodes
+   ```
+
+Prometheus keeps 2 days of data on an emptyDir, and Grafana has no volume either: both start empty after a pod restart or a rebuild. Dashboards come from ConfigMaps labelled `grafana_dashboard: "1"` in any namespace.
+
+## 6. End of session
 
 The environment costs roughly $6-7 a day while it runs, so destroy it when you finish. Review the destroy plan first:
 
@@ -81,3 +200,5 @@ The full teardown order, needed once Argo CD and the Load Balancer Controller cr
 - `DescribeCluster`: version 1.36, `authenticationMode=API`, public endpoint limited to your CIDR, audit + authenticator logging.
 - `ListAccessEntries`: only the PlatformAdmin role (plus the node role EKS adds itself).
 - Resource Groups Tagging: every resource tagged `Project=aws-platform`, `Application=platform`.
+- `ListPodIdentityAssociations`: one association, `kube-system`/`aws-load-balancer-controller`, with the `aws-platform-dev-aws-load-balancer-controller` role.
+- Resource Groups Tagging, once an Ingress exists: the ALB and its target groups carry the controller's `defaultTags` (`Project`, `Application`, `Environment`, `ManagedBy`, `Repository`).

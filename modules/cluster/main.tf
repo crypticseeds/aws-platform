@@ -77,8 +77,9 @@ module "eks" {
     eks-pod-identity-agent = {
       before_compute = true
     }
-    kube-proxy = {}
-    coredns    = {}
+    kube-proxy     = {}
+    coredns        = {}
+    metrics-server = {}
   }
 
   eks_managed_node_groups = {
