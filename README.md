@@ -27,7 +27,7 @@ policies/         IAM policy documents applied outside Terraform
 
 ## How to run
 
-Every command that touches AWS is run by the owner, with short-lived Identity Center (SSO) credentials. CI only ever runs `terraform plan`. Start with [docs/runbooks/bootstrap.md](docs/runbooks/bootstrap.md).
+Every command that touches AWS is run by the owner, with short-lived Identity Center (SSO) credentials. CI never applies: it runs static checks on every pull request ([docs/runbooks/ci.md](docs/runbooks/ci.md)) and, against AWS, only `terraform plan`. Start with [docs/runbooks/bootstrap.md](docs/runbooks/bootstrap.md).
 
 Local checks before every commit:
 
