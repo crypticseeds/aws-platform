@@ -1,0 +1,131 @@
+# kube-prometheus-stack: Prometheus Operator, Prometheus, Alertmanager,
+# Grafana, kube-state-metrics and node-exporter. Release name and namespace
+# are fixed: Promscope queries
+# http://kube-prometheus-stack-prometheus.monitoring:9090.
+#
+# Nothing is exposed: every Service is ClusterIP, reached by port-forward
+# (docs/runbooks/deploy.md). No PVCs: Prometheus, Alertmanager and Grafana
+# use emptyDir, so data is lost when a pod restarts. The cluster is destroyed
+# every session anyway.
+#
+# Before the first sync the owner creates the Secret grafana-admin in
+# monitoring from Doppler (runbook step 5).
+#
+# Wave -1: the monitoring CRDs (ServiceMonitor, PrometheusRule) must exist
+# before the apps (wave 0) that ship ServiceMonitors.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: aws-platform
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 91.9.0
+    helm:
+      releaseName: kube-prometheus-stack
+      # Sized for 2x t3.medium shared with Argo CD and the apps.
+      valuesObject:
+        # The EKS control plane is managed by AWS: its scheduler, controller
+        # manager and etcd cannot be scraped, so their targets and alerts
+        # would only ever be down.
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+
+        prometheusOperator:
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+          prometheusConfigReloader:
+            resources:
+              requests: {cpu: 10m, memory: 32Mi}
+              limits: {memory: 64Mi}
+          admissionWebhooks:
+            patch:
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 64Mi}
+
+        prometheus:
+          service:
+            type: ClusterIP
+          prometheusSpec:
+            retention: 2d
+            # Keeps the emptyDir below its size limit.
+            retentionSize: 2GB
+            storageSpec:
+              emptyDir:
+                sizeLimit: 3Gi
+            # Pick up every ServiceMonitor in the cluster (the apps' charts
+            # ship their own), not only those labelled for this release.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            resources:
+              requests: {cpu: 200m, memory: 768Mi}
+              limits: {memory: 1536Mi}
+
+        alertmanager:
+          service:
+            type: ClusterIP
+          alertmanagerSpec:
+            resources:
+              requests: {cpu: 10m, memory: 48Mi}
+              limits: {memory: 128Mi}
+
+        grafana:
+          service:
+            type: ClusterIP
+          persistence:
+            enabled: false
+          # No Helm test pod: Argo CD does not run Helm tests.
+          testFramework:
+            enabled: false
+          # Admin credentials from the owner-created Secret (Doppler
+          # GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD).
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
+          # Dashboards are ConfigMaps labelled grafana_dashboard: "1", in any
+          # namespace.
+          sidecar:
+            dashboards:
+              enabled: true
+              label: grafana_dashboard
+              labelValue: "1"
+              searchNamespace: ALL
+            resources:
+              requests: {cpu: 10m, memory: 64Mi}
+              limits: {memory: 128Mi}
+          resources:
+            requests: {cpu: 50m, memory: 192Mi}
+            limits: {memory: 384Mi}
+
+        kube-state-metrics:
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 128Mi}
+
+        prometheus-node-exporter:
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 64Mi}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The Prometheus Operator CRDs are too large for client-side apply's
+      # last-applied annotation.
+      - ServerSideApply=true

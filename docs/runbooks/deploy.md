@@ -115,7 +115,71 @@ Argo CD is installed once per cluster with Helm, then manages everything else fr
 
    Expect `root` as `Synced` and `Healthy`, and the projects `bootstrap`, `aws-platform` and `default`.
 
-## 5. End of session
+## 5. Platform add-ons (owner)
+
+The root app creates two add-on Applications from `argocd/apps/`: the AWS Load Balancer Controller (`kube-system`, sync wave -2) and kube-prometheus-stack (`monitoring`, wave -1). Apps come after them (wave 0).
+
+The controller's IAM role and its Pod Identity association are part of `envs/dev`, so step 2's apply already created them. Nothing to do for the controller.
+
+**Before the first install:** store the Grafana admin login in Doppler as `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`.
+
+1. Create the Grafana admin Secret before Argo CD syncs kube-prometheus-stack (otherwise Grafana waits in `CreateContainerConfigError` until it exists). Both values go from Doppler to `kubectl` through stdin, so they never appear in your terminal, shell history or the process list. Run it where `doppler setup` points at the config with the secrets (or add `-p <project> -c <config>`):
+
+   ```
+   kubectl create namespace monitoring
+   doppler run --only-secrets GRAFANA_ADMIN_USER,GRAFANA_ADMIN_PASSWORD -- sh -c 'printf "admin-user=%s\nadmin-password=%s\n" "$GRAFANA_ADMIN_USER" "$GRAFANA_ADMIN_PASSWORD" | kubectl -n monitoring create secret generic grafana-admin --from-env-file=/dev/stdin'
+   ```
+
+   `printf` is a shell builtin, so the values are not in any process's arguments either. `describe` shows only the key names and sizes:
+
+   ```
+   kubectl -n monitoring describe secret grafana-admin
+   ```
+
+   Expect the keys `admin-user` and `admin-password`.
+
+2. Watch both add-ons sync:
+
+   ```
+   kubectl -n argocd get applications
+   ```
+
+   Expect `aws-load-balancer-controller` and `kube-prometheus-stack` both `Synced` and `Healthy`.
+
+3. The controller must have its AWS permissions. Both pods `Running`, and no AccessDenied in its first 5 minutes of logs:
+
+   ```
+   kubectl -n kube-system get pods -l app.kubernetes.io/name=aws-load-balancer-controller
+   kubectl -n kube-system logs -l app.kubernetes.io/name=aws-load-balancer-controller --since=5m --tail=-1 | grep -ci accessdenied
+   ```
+
+   Expect `0`.
+
+4. Nothing in monitoring is exposed:
+
+   ```
+   kubectl get svc -A | grep -E 'grafana|prometheus|alertmanager'
+   ```
+
+   Every line must be `ClusterIP`, none `LoadBalancer` or `NodePort`.
+
+5. Log in to Grafana over port-forward with the Doppler credentials:
+
+   ```
+   kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
+   ```
+
+   Open http://localhost:3000. Prometheus and Alertmanager work the same way when needed (`svc/kube-prometheus-stack-prometheus 9090:9090`, `svc/kube-prometheus-stack-alertmanager 9093:9093`).
+
+6. Record node headroom with both add-ons running (the "before" number for P4):
+
+   ```
+   kubectl top nodes
+   ```
+
+Prometheus keeps 2 days of data on an emptyDir, and Grafana has no volume either: both start empty after a pod restart or a rebuild. Dashboards come from ConfigMaps labelled `grafana_dashboard: "1"` in any namespace.
+
+## 6. End of session
 
 The environment costs roughly $6-7 a day while it runs, so destroy it when you finish. Review the destroy plan first:
 
@@ -136,3 +200,5 @@ The full teardown order, needed once Argo CD and the Load Balancer Controller cr
 - `DescribeCluster`: version 1.36, `authenticationMode=API`, public endpoint limited to your CIDR, audit + authenticator logging.
 - `ListAccessEntries`: only the PlatformAdmin role (plus the node role EKS adds itself).
 - Resource Groups Tagging: every resource tagged `Project=aws-platform`, `Application=platform`.
+- `ListPodIdentityAssociations`: one association, `kube-system`/`aws-load-balancer-controller`, with the `aws-platform-dev-aws-load-balancer-controller` role.
+- Resource Groups Tagging, once an Ingress exists: the ALB and its target groups carry the controller's `defaultTags` (`Project`, `Application`, `Environment`, `ManagedBy`, `Repository`).

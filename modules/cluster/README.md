@@ -7,7 +7,7 @@ EKS cluster with one managed node group, wrapping [`terraform-aws-modules/eks/aw
 - EKS Pod Identity for workload IAM (no IRSA OIDC provider).
 - Kubernetes API data encrypted by EKS's default envelope encryption (AWS-owned key). No customer-managed KMS key: this is a disposable dev cluster.
 - Audit and authenticator control-plane logs, 7-day retention.
-- Core add-ons: vpc-cni and eks-pod-identity-agent (before nodes), kube-proxy, coredns.
+- Core add-ons: vpc-cni and eks-pod-identity-agent (before nodes), kube-proxy, coredns, metrics-server (for `kubectl top`).
 - AL2023 nodes, IMDSv2 required (module default). `tags` reach the node launch template, so instances and volumes are tagged for cost tracking.
 
 ## Inputs

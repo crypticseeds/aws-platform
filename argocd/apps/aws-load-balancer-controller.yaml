@@ -1,0 +1,91 @@
+# AWS Load Balancer Controller: turns Ingresses into ALBs (and LoadBalancer
+# Services into NLBs). Its AWS permissions come from EKS Pod Identity: the
+# role and the association for kube-system/aws-load-balancer-controller are in
+# envs/dev/aws-load-balancer-controller.tf, so the service account carries no
+# role annotation.
+#
+# Wave -2: its webhooks must be serving before anything creates Ingresses or
+# Services (kube-prometheus-stack is wave -1, the apps wave 0).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aws-load-balancer-controller
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: aws-platform
+  source:
+    repoURL: https://aws.github.io/eks-charts
+    chart: aws-load-balancer-controller
+    # Controller v3.5.0. The IAM policy in envs/dev/policies/ is for this
+    # exact version; upgrade both together.
+    targetRevision: 3.5.0
+    helm:
+      releaseName: aws-load-balancer-controller
+      valuesObject:
+        # Fixed names, not IDs: the cluster and VPC are both named by
+        # var.name in envs/dev (default aws-platform-dev). The VPC is found
+        # by its Name tag (ec2:DescribeVpcs is in the upstream policy), so
+        # nothing changes here when the environment is rebuilt with a new
+        # VPC ID.
+        clusterName: aws-platform-dev
+        region: eu-west-2
+        vpcTags:
+          Name: aws-platform-dev
+
+        serviceAccount:
+          create: true
+          name: aws-load-balancer-controller
+
+        # Added to every ALB, NLB, target group and security group the
+        # controller creates, so they show up under the project in Cost
+        # Explorer (ADR 0008). Application=platform as for the rest of
+        # envs/dev; ManagedBy says who created them.
+        defaultTags:
+          Project: aws-platform
+          Application: platform
+          Environment: dev
+          ManagedBy: aws-load-balancer-controller
+          Repository: github.com/crypticseeds/aws-platform
+
+        # Only Ingresses create AWS load balancers. With the webhook on, any
+        # `type: LoadBalancer` Service would silently get a paid NLB.
+        enableServiceMutatorWebhook: false
+
+        replicaCount: 2
+        podDisruptionBudget:
+          maxUnavailable: 1
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 256Mi}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  # The chart generates a new self-signed webhook certificate on every render.
+  # Argo CD cannot use Helm's lookup to keep the old one, so the live
+  # certificate and caBundle are ignored after the first sync and kept as
+  # they are (RespectIgnoreDifferences) instead of being rotated on every
+  # refresh.
+  ignoreDifferences:
+    - group: ""
+      kind: Secret
+      name: aws-load-balancer-tls
+      jsonPointers:
+        - /data
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      name: aws-load-balancer-webhook
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      name: aws-load-balancer-webhook
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - RespectIgnoreDifferences=true

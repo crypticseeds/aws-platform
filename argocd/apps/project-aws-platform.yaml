@@ -1,18 +1,25 @@
 # AppProject for the platform add-ons and the apps. Each workload gets its own
 # namespace; argocd itself is not a permitted destination.
 #
-# Kept minimal on purpose: only this repo as a source and only Namespace as a
-# cluster-scoped kind. The add-ons issue (DEV-142) adds the upstream chart
-# repos and the cluster-scoped kinds they need (CRDs, ClusterRoles, webhooks).
+# Kept minimal on purpose: this repo plus the two upstream chart repos of the
+# platform add-ons as sources. The cluster-scoped kinds are exactly those in
+# `helm template` of the pinned add-on charts (aws-load-balancer-controller
+# 3.5.0, kube-prometheus-stack 91.9.0) plus Namespace for CreateNamespace.
+# Re-check the list when either chart is upgraded.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: aws-platform
   namespace: argocd
+  annotations:
+    # Before the Applications that use it (add-ons -2/-1, apps 0).
+    argocd.argoproj.io/sync-wave: "-3"
 spec:
   description: Platform add-ons and applications for aws-platform.
   sourceRepos:
     - https://github.com/crypticseeds/aws-platform.git
+    - https://aws.github.io/eks-charts
+    - https://prometheus-community.github.io/helm-charts
   destinations:
     - server: https://kubernetes.default.svc
       namespace: gateway
@@ -25,3 +32,19 @@ spec:
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
+    # Both add-ons: their CRDs, cluster RBAC and admission webhooks.
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    # Load Balancer Controller: the alb IngressClass and its parameters.
+    - group: networking.k8s.io
+      kind: IngressClass
+    - group: elbv2.k8s.aws
+      kind: IngressClassParams
