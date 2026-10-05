@@ -1,0 +1,5 @@
+apiVersion: v2
+name: promscope
+description: Promscope, an MCP server for querying Prometheus, for the aws-platform EKS cluster.
+type: application
+version: 0.1.0

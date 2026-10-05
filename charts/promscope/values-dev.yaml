@@ -1,0 +1,11 @@
+# Dev environment.
+#
+# image.repository and image.tag are set when the first image is built
+# (DEV-138); until then rendering fails on purpose.
+#
+# Reach the MCP endpoint locally:
+#   kubectl -n <namespace> port-forward svc/promscope 8090:8090
+#   then use http://localhost:8090/mcp
+
+serviceMonitor:
+  enabled: true

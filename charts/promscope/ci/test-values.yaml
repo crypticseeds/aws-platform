@@ -1,0 +1,4 @@
+# Used only by offline checks (helm lint, kubeconform). Never deployed.
+image:
+  repository: example/promscope
+  tag: "0000000000000000000000000000000000000000"

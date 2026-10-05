@@ -1,0 +1,72 @@
+# Defaults for every environment. Environment files (values-dev.yaml) override.
+#
+# Exposure: ClusterIP only, no Ingress. Promscope has no authentication by
+# design, so /mcp is reached with `kubectl port-forward` (DEV-140).
+
+# Stateless MCP transport (PROMSCOPE_STATELESS defaults to true), so any
+# replica can answer any request and the Service needs no session affinity.
+replicaCount: 2
+
+image:
+  # Both required: rendering fails until a real Docker Hub repository and a
+  # quoted git SHA tag are set. "latest" is rejected.
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# The Secret is created by the owner from Doppler and referenced by name only.
+imagePullSecrets:
+  - name: dockerhub-pull
+
+# The image is distroless :nonroot but its Dockerfile says `USER nonroot` by
+# name, which runAsNonRoot cannot check. 65532 is distroless's nonroot UID.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+# /mcp, /healthz and /metrics are all served on this port.
+port: 8090
+
+# kube-prometheus-stack release "kube-prometheus-stack" in namespace
+# "monitoring" (decided on DEV-142).
+prometheusURL: http://kube-prometheus-stack-prometheus.monitoring:9090
+
+# /healthz answers without calling Prometheus, so a Prometheus outage never
+# restarts promscope.
+probes:
+  path: /healthz
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 2
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
