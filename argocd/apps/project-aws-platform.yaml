@@ -1,0 +1,27 @@
+# AppProject for the platform add-ons and the apps. Each workload gets its own
+# namespace; argocd itself is not a permitted destination.
+#
+# Kept minimal on purpose: only this repo as a source and only Namespace as a
+# cluster-scoped kind. The add-ons issue (DEV-142) adds the upstream chart
+# repos and the cluster-scoped kinds they need (CRDs, ClusterRoles, webhooks).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: aws-platform
+  namespace: argocd
+spec:
+  description: Platform add-ons and applications for aws-platform.
+  sourceRepos:
+    - https://github.com/crypticseeds/aws-platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: gateway
+    - server: https://kubernetes.default.svc
+      namespace: promscope
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace

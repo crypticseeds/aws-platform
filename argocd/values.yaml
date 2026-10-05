@@ -1,0 +1,80 @@
+# Values for the official argo-cd Helm chart, installed once by the owner:
+#   chart argo-cd 10.9.6 (Argo CD v3.5.3) from https://argoproj.github.io/argo-helm
+# See docs/runbooks/deploy.md and ADR 0011.
+
+# Reached only by `kubectl port-forward`: no Ingress, no LoadBalancer.
+server:
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+# No SSO in P1: login is the local admin account over port-forward.
+dex:
+  enabled: false
+
+controller:
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 1Gi}
+
+repoServer:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+redis:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+applicationSet:
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+# Slack alerts to #alerts when a sync fails or an app turns Degraded.
+notifications:
+  enabled: true
+  # Links in messages point at the port-forwarded UI.
+  argocdUrl: https://localhost:8080
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}
+  # The owner creates argocd-notifications-secret from Doppler
+  # (SLACK_ARGOCD_BOT_TOKEN -> key slack-token). The chart must not create or
+  # overwrite it.
+  secret:
+    create: false
+  notifiers:
+    service.slack: |
+      token: $slack-token
+  templates:
+    template.app-sync-failed: |
+      message: |
+        :x: Argo CD: *{{.app.metadata.name}}* sync failed at {{.app.status.operationState.finishedAt}}.
+        {{.app.status.operationState.message}}
+        {{.context.argocdUrl}}/applications/{{.app.metadata.name}}
+    template.app-health-degraded: |
+      message: |
+        :warning: Argo CD: *{{.app.metadata.name}}* is Degraded.
+        {{.context.argocdUrl}}/applications/{{.app.metadata.name}}
+  triggers:
+    trigger.on-sync-failed: |
+      - description: Application sync has failed
+        send: [app-sync-failed]
+        when: app.status.operationState != nil and app.status.operationState.phase in ['Error', 'Failed']
+        oncePer: app.status.operationState.syncResult.revision
+    trigger.on-health-degraded: |
+      - description: Application health is Degraded
+        send: [app-health-degraded]
+        when: app.status.health.status == 'Degraded'
+  subscriptions:
+    - recipients:
+        - slack:alerts
+      triggers:
+        - on-sync-failed
+        - on-health-degraded

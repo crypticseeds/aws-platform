@@ -1,0 +1,21 @@
+# AppProject for the root Application only. It may read this repo's
+# argocd/apps/ and create Applications and AppProjects in the argocd
+# namespace, nothing else. Applied once by the owner with root.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: bootstrap
+  namespace: argocd
+spec:
+  description: Root app-of-apps. Creates Applications and AppProjects only.
+  sourceRepos:
+    - https://github.com/crypticseeds/aws-platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application
+    - group: argoproj.io
+      kind: AppProject
