@@ -103,8 +103,8 @@ See [bootstrap.md](bootstrap.md#step-2-move-bootstrap-state-into-the-bucket-owne
 
 ## Never destroy
 
-- **`bootstrap/`**: the Terraform state bucket. It has `prevent_destroy`, and it holds the state of every root. Losing it loses track of everything.
-- **`account/`**: the GitHub OIDC provider and the CI role. They cost nothing, and CI plans stop working without them.
+- **`bootstrap/`** ([bootstrap.md](bootstrap.md)): the Terraform state bucket. It has `prevent_destroy`, and it holds the state of every root. Losing it loses track of everything.
+- **`account/`** ([account.md](account.md)): the GitHub OIDC provider and the CI role. They cost nothing, and CI plans stop working without them.
 
 Run `terraform destroy` only in `envs/dev`.
 
