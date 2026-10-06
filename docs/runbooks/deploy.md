@@ -185,15 +185,15 @@ The root app also creates `sre-inference-gateway` (namespace `gateway`) and `pro
 
 Both Docker Hub repositories are public. The Secret `dockerhub-pull` only lifts anonymous pull rate limits. Both charts reference it through `imagePullSecrets`. If it does not exist, the pods still start: the kubelet logs a warning event on the pod and pulls anonymously. Create it before the first sync anyway.
 
-**Before the first sync:** store a Docker Hub username and an access token (read-only scope) in Doppler as `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+**Before the first sync:** store a Docker Hub username and an access token (read-only scope) in Doppler as `DOCKERHUB_PULL_USERNAME` and `DOCKERHUB_PULL_TOKEN` (the pull credentials; the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` pair is the push credential used by the image workflows in GitHub Actions).
 
 1. Create the namespaces and the pull Secret in each. The values go from Doppler to `kubectl` through stdin, so they never appear in your terminal, shell history or the process list (`printf` is a builtin). Run it where `doppler setup` points at the config with the secrets (or add `-p <project> -c <config>`):
 
    ```
    kubectl create namespace gateway
    kubectl create namespace promscope
-   doppler run --only-secrets DOCKERHUB_USERNAME,DOCKERHUB_TOKEN -- sh -c 'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_USERNAME" "$DOCKERHUB_TOKEN" | kubectl -n gateway create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
-   doppler run --only-secrets DOCKERHUB_USERNAME,DOCKERHUB_TOKEN -- sh -c 'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_USERNAME" "$DOCKERHUB_TOKEN" | kubectl -n promscope create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
+   doppler run --only-secrets DOCKERHUB_PULL_USERNAME,DOCKERHUB_PULL_TOKEN -- sh -c 'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_PULL_USERNAME" "$DOCKERHUB_PULL_TOKEN" | kubectl -n gateway create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
+   doppler run --only-secrets DOCKERHUB_PULL_USERNAME,DOCKERHUB_PULL_TOKEN -- sh -c 'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_PULL_USERNAME" "$DOCKERHUB_PULL_TOKEN" | kubectl -n promscope create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
    ```
 
    `describe` shows only the key name and size. Expect type `kubernetes.io/dockerconfigjson` and the key `.dockerconfigjson`:
