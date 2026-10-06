@@ -11,7 +11,7 @@ variable "state_bucket_name" {
 }
 
 variable "github_repository" {
-  description = "GitHub repository (owner/name) whose pull request workflows may assume the CI plan role."
+  description = "GitHub repository whose pull request workflows may assume the CI plan role, in the immutable OIDC subject form owner@owner_id/name@repo_id (this repo uses use_immutable_subject)."
   type        = string
-  default     = "crypticseeds/aws-platform"
+  default     = "crypticseeds@94658643/aws-platform@1370620640"
 }

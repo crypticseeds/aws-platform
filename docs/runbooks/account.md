@@ -13,7 +13,7 @@ aws-platform/account/terraform.tfstate
 | Resource | Setting |
 |---|---|
 | IAM OIDC provider `token.actions.githubusercontent.com` | Client ID `sts.amazonaws.com`. No thumbprint: AWS checks GitHub's certificate against its own trusted CAs. One per account, shared by every project's CI role. |
-| IAM role `aws-platform-ci-plan` | Assumable only through that provider when `aud = sts.amazonaws.com` and `sub = repo:crypticseeds/aws-platform:pull_request` (both `StringEquals`). Pushes to `main`, other branches, tags and other repos cannot assume it. Maximum session 1 hour. |
+| IAM role `aws-platform-ci-plan` | Assumable only through that provider when `aud = sts.amazonaws.com` and `sub = repo:crypticseeds@94658643/aws-platform@1370620640:pull_request` (GitHub immutable subject: owner and repo IDs, so a renamed or re-created repo cannot match) (both `StringEquals`). Pushes to `main`, other branches, tags and other repos cannot assume it. Maximum session 1 hour. |
 | Managed policy `ReadOnlyAccess` | Attached to the role. |
 | Inline policy `terraform-state` | `s3:ListBucket` on the state bucket, `s3:GetObject` on its objects, `s3:PutObject` and `s3:DeleteObject` only on `*.tflock` keys (the S3-native lock, [ADR 0005](../decisions/0005-s3-native-state-locking.md)). |
 

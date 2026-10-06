@@ -1,4 +1,4 @@
 # Copy to terraform.tfvars only if you need to change a default. All variables have safe defaults.
 # region            = "eu-west-2"
 # state_bucket_name = "aws-platform-tfstate-e62514a9b973c8e95b9ebccad0"
-# github_repository = "crypticseeds/aws-platform"
+# github_repository = "crypticseeds@94658643/aws-platform@1370620640"
