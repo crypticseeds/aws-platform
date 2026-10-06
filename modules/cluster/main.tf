@@ -11,8 +11,15 @@ data "aws_iam_roles" "admin" {
   path_prefix = "/aws-reserved/sso.amazonaws.com/"
 }
 
+# Same lookup for the agent's read-only permission set.
+data "aws_iam_roles" "agent_readonly" {
+  name_regex  = "^AWSReservedSSO_${var.agent_permission_set_name}_[0-9a-f]+$"
+  path_prefix = "/aws-reserved/sso.amazonaws.com/"
+}
+
 locals {
-  admin_role_arn = one(data.aws_iam_roles.admin.arns)
+  admin_role_arn          = one(data.aws_iam_roles.admin.arns)
+  agent_readonly_role_arn = one(data.aws_iam_roles.agent_readonly.arns)
 }
 
 # Accepted trivy findings (dev cluster, reviewed 2026-10-04):
@@ -53,6 +60,15 @@ module "eks" {
           access_scope = { type = "cluster" }
         }
       }
+    }
+
+    # The agent (read-only). No access policy on purpose: the role only maps
+    # to the Kubernetes group below, and everything it may do comes from the
+    # agent-readonly ClusterRole in platform/agent-rbac/ (no Secrets, no
+    # writes). With no RBAC bound, it can do nothing.
+    agent_readonly = {
+      principal_arn     = local.agent_readonly_role_arn
+      kubernetes_groups = ["agent-readonly"]
     }
   }
 

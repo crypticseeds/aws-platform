@@ -1,0 +1,26 @@
+# Read-only Kubernetes RBAC for the agent (ClusterRole + ClusterRoleBinding for
+# the group agent-readonly, see platform/agent-rbac/). Plain manifests from
+# this repo. Both kinds are cluster-scoped, so the destination namespace is not
+# used for them; kube-system is just an allowed destination of the project.
+#
+# Wave -2: in place with the add-ons, after the AppProject (wave -3).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agent-rbac
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: aws-platform
+  source:
+    repoURL: https://github.com/crypticseeds/aws-platform.git
+    targetRevision: main
+    path: platform/agent-rbac
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
