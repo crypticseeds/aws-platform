@@ -1,0 +1,148 @@
+# Plan-only Terraform on pull requests. Read-only: it never applies anything.
+# Static checks (fmt, tflint, trivy, checkov) live in checks.yml; this workflow only runs
+# init, validate and plan per root and posts the plan as one PR comment per root.
+# Needs the repository secrets AWS_CI_PLAN_ROLE_ARN (OIDC role) and, for envs/dev,
+# TF_VAR_endpoint_public_access_cidrs. Skips with a notice when the role secret is unset or
+# the PR comes from a fork. See docs/runbooks/ci.md.
+name: terraform-plan
+
+on:
+  pull_request:
+    paths:
+      - "**/*.tf"
+      - "**/*.tfvars.example"
+      - "**/.terraform.lock.hcl"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # Same version as checks.yml and the owner's local install.
+  TERRAFORM_VERSION: 1.14.7
+  AWS_REGION: eu-west-2
+
+jobs:
+  plan:
+    name: plan (${{ matrix.root }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [bootstrap, account, envs/dev]
+    env:
+      # Only envs/dev declares this variable; Terraform ignores undeclared TF_VAR_* elsewhere.
+      # GitHub masks the secret in logs.
+      TF_VAR_endpoint_public_access_cidrs: ${{ secrets.TF_VAR_endpoint_public_access_cidrs }}
+    steps:
+      - name: Check plan prerequisites
+        id: gate
+        env:
+          ROLE_ARN: ${{ secrets.AWS_CI_PLAN_ROLE_ARN }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          ROOT: ${{ matrix.root }}
+        run: |
+          if [ "$IS_FORK" = "true" ]; then
+            echo "::notice title=terraform-plan::Skipped ${ROOT}: pull request from a fork has no OIDC token."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$ROLE_ARN" ]; then
+            echo "::notice title=terraform-plan::Skipped ${ROOT}: repository secret AWS_CI_PLAN_ROLE_ARN is not set."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          # Public repo: logs are public, and ARNs in plan output contain the account ID.
+          mask-aws-account-id: true
+      - name: terraform init
+        if: steps.gate.outputs.enabled == 'true'
+        working-directory: ${{ matrix.root }}
+        run: terraform init -input=false
+      - name: terraform validate
+        if: steps.gate.outputs.enabled == 'true'
+        working-directory: ${{ matrix.root }}
+        run: terraform validate
+      - name: terraform plan (read-only)
+        id: plan
+        if: steps.gate.outputs.enabled == 'true'
+        working-directory: ${{ matrix.root }}
+        # Takes the normal S3 lock: the CI role may write and delete only *.tflock objects
+        # (ADR 0007), so a plan never races a local apply. The plan is never saved or applied.
+        run: |
+          set -o pipefail
+          rc=0
+          terraform plan -input=false -no-color 2>&1 | tee "$RUNNER_TEMP/plan.txt" || rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+      - name: Post or update the plan comment
+        if: ${{ !cancelled() && steps.plan.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ROOT: ${{ matrix.root }}
+          PLAN_EXIT_CODE: ${{ steps.plan.outputs.exit_code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          marker="<!-- terraform-plan:${ROOT} -->"
+          # GitHub rejects comment bodies over 65536 characters.
+          limit=60000
+          plan_file="$RUNNER_TEMP/plan.txt"
+          [ -f "$plan_file" ] || echo "(no plan output was produced)" > "$plan_file"
+          # Log masking does not apply to comment bodies: redact the account ID from ARNs here.
+          account_id=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || true)
+          if [ -n "$account_id" ]; then
+            sed -i "s/${account_id}/<account-id>/g" "$plan_file"
+          fi
+          notice=""
+          if [ "$(wc -c < "$plan_file")" -gt "$limit" ]; then
+            head -c "$limit" "$plan_file" > "$plan_file.cut"
+            mv "$plan_file.cut" "$plan_file"
+            notice="Output truncated to ${limit} bytes. Full plan: ${RUN_URL}"
+          fi
+          status="succeeded"
+          [ "$PLAN_EXIT_CODE" = "0" ] || status="FAILED (exit ${PLAN_EXIT_CODE})"
+          {
+            echo "$marker"
+            echo "### Terraform plan: \`${ROOT}\` - ${status}"
+            echo
+            echo '```'
+            cat "$plan_file"
+            echo '```'
+            [ -z "$notice" ] || { echo; echo "$notice"; }
+            echo
+            echo "Plan only, never applied. [Run](${RUN_URL})"
+          } > "$RUNNER_TEMP/comment.md"
+          jq -n --rawfile body "$RUNNER_TEMP/comment.md" '{body: $body}' > "$RUNNER_TEMP/comment.json"
+          existing=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" --input "$RUNNER_TEMP/comment.json" > /dev/null
+          else
+            gh api --method POST "repos/${REPO}/issues/${PR_NUMBER}/comments" --input "$RUNNER_TEMP/comment.json" > /dev/null
+          fi
+      - name: Fail if the plan failed
+        if: ${{ !cancelled() && steps.plan.outputs.exit_code != '' && steps.plan.outputs.exit_code != '0' }}
+        env:
+          ROOT: ${{ matrix.root }}
+        run: |
+          echo "::error title=terraform-plan::terraform plan failed for ${ROOT}"
+          exit 1
