@@ -1,6 +1,6 @@
 # Terraform foundation: tracking, guardrails, state and the first cluster design
 
-Journal entry 03 for the aws-platform project. Written 2026-10-04, covering the sessions of 2026-10-03 and 2026-10-04.
+Journal entry 03 for the aws-platform project. Written 2026-10-04, covering the sessions of 2026-10-03 and 2026-10-04. Extended on 2026-10-07 with the work merged between 2026-10-05 and 2026-10-06 (steps 11 to 18). This is a living document for the rest of P1 and is finalised at the close-out (DEV-147): see [Draft status](#draft-status-todo-at-close-out). The criteria table is in [03-p1-closeout-table.md](03-p1-closeout-table.md).
 
 This records how Seeds (the owner) and the AI agent went from "account secured, no code" to "Terraform repo with safety rails, a live state bucket, and a reviewed VPC + EKS design ready to apply":
 
@@ -262,6 +262,63 @@ See [How teams reach private clusters](#how-teams-reach-private-clusters) for th
 - make the EKS endpoint private and reach it over Tailscale (the Pi is already on the owner's tailnet) through a subnet router in the VPC;
 - give Argo a machine identity, not SSO.
 
+### 11. Write down the decisions as ADRs (DEV-128, PR #2)
+
+**What:** eleven architecture decision records in `docs/decisions/` (0001 to 0011): single account, Identity Center and a read-only agent, community modules, single NAT, S3-native locking, Docker Hub instead of ECR, plan-only CI, tagging and layering, EKS security choices, multi-project state layout, and (with DEV-141) installing Argo CD by Helm.
+
+**Why:** a decision that lives only in a chat or a journal is hard to find and easy to reverse by accident. An ADR holds the context, the decision and the alternatives in one short file a reviewer can link to. The "Decisions and trade-offs" table below stays as the summary and links out.
+
+### 12. Plan-only CI: the OIDC role and the plan workflow (DEV-133, DEV-135)
+
+**What:**
+
+- `account/` is a new permanent Terraform root (its own state key, never destroyed) holding the GitHub OIDC provider and the role `aws-platform-ci-plan` (PR #9). Because it lives outside `envs/dev`, the role survives every cluster destroy ([ADR 0010](../decisions/0010-multi-project-state-layout.md)).
+- The role trusts only GitHub's OIDC provider, with audience `sts.amazonaws.com` and a subject limited to pull requests of this repository. It gets `ReadOnlyAccess`, read access to the state bucket, and write access to `*.tflock` keys only, so a plan can take the lock but cannot change state. Maximum session one hour.
+- `.github/workflows/terraform-plan.yml` (PR #17) runs `terraform plan` for `bootstrap`, `account` and `envs/dev` on pull requests that touch `*.tf`, and posts one comment per root, updated in place. There is no `apply` anywhere in CI ([ADR 0007](../decisions/0007-plan-only-ci.md)).
+- Leak protection added during review: the account ID is masked in logs and replaced by `<account-id>` in the comment, and `endpoint_public_access_cidrs` is marked `sensitive` so the owner's IP does not print in the `envs/dev` plan. Plans take the state lock like everyone else (an early draft used `-lock=false`, which was removed).
+
+**Why:** a plan in the pull request lets a reviewer see what Terraform would change before merging. OIDC means GitHub proves who it is to AWS per run, so no access key is stored in GitHub. Giving the role no write access except to lock files means a compromised workflow cannot change infrastructure.
+
+### 13. Static checks in CI (DEV-163, PR #8)
+
+**What:** `.github/workflows/checks.yml` runs the pre-commit hooks, Helm lint with kubeconform, actionlint, and scanners (checkov, trivy, Snyk) on every pull request, with no AWS credentials. The scanners are advisory, as the DEV-163 decision stated; the pre-commit, chart and actionlint jobs gate.
+
+**Why:** the local pre-commit hooks only protect the machines that have them installed. The same checks in CI protect the public repo from every contributor, including the agent on another machine.
+
+### 14. Helm charts for the two apps (DEV-139, DEV-140, PRs #3 and #5)
+
+**What:** `charts/sre-inference-gateway` and `charts/promscope`. The image repository and tag are `required` and empty in `values.yaml`, so rendering fails until a real image is set; the Argo Applications set them. Lint and kubeconform use `ci/test-values.yaml`, a throwaway image that only the checks use. The gateway runs as a fixed numeric user (10001) with a read-only root filesystem, a `/tmp` emptyDir, two replicas and a PodDisruptionBudget. The gateway's Ingress is an internet-facing ALB (grouped as `aws-platform-dev`); Promscope is `ClusterIP` only.
+
+**Why:** a chart that cannot render without a real, pinned image means nothing fake can reach the cluster by accident. `runAsNonRoot` rejects an image whose user has no numeric ID, which is why DEV-162 gave the gateway image a fixed UID.
+
+### 15. Argo CD and the platform add-ons (DEV-141, DEV-142, PRs #6, #10, #11)
+
+**What:** Argo CD installed once by `helm install` (chart 10.9.6, pinned; [ADR 0011](../decisions/0011-argocd-install-by-helm.md)), a root "app of apps" in `argocd/root.yaml` that syncs everything under `argocd/apps/`, a small `bootstrap` AppProject for the root and an `aws-platform` AppProject for the apps. The add-ons are Argo apps too: the AWS Load Balancer Controller (Pod Identity, service webhook off so a stray `type: LoadBalancer` Service cannot create a paid load balancer) and kube-prometheus-stack (no volumes, so no EBS CSI driver and no orphaned disks). The EKS-managed `metrics-server` add-on was added to `modules/cluster`. Sync waves order it: project, load balancer controller, monitoring stack, then the apps.
+
+**Status:** merged and checked offline only (helm template, kubeconform, validation against the Argo CD CRD schemas). Nothing has run on a cluster yet, so the live criteria are **UNVERIFIED**.
+
+### 16. Agent read-only access inside the cluster (DEV-136, PR #18)
+
+**What:** `modules/cluster` creates an EKS access entry for the `AgentReadOnly` permission set with the Kubernetes group `agent-readonly` and no access policy. A ClusterRole and ClusterRoleBinding in `platform/agent-rbac/`, synced by an Argo app, give that group `get`, `list` and `watch` only, with no `secrets`, no wildcards and no exec, attach, port-forward or impersonation. The role ARN is looked up in full, path included (the lesson from step 7's gotcha).
+
+**Why:** the managed EKS MCP server limits which tools the agent can call, but Kubernetes RBAC is the layer that decides what a read returns. Keeping Secrets out of the role is what makes "the agent never reads a secret" true for the cluster as well.
+
+**Status:** the ClusterRole was audited by reading it, and the manifests validate offline. It is **UNVERIFIED live**: the access entry exists only after the owner applies `envs/dev`, and the check (pods readable, secrets `Forbidden`) needs a running cluster.
+
+### 17. Images built in CI and pushed to Docker Hub (DEV-137, DEV-138)
+
+**What:** an `image.yml` workflow in each app repository builds on push to `main` and pushes `<namespace>/<app>:<commit sha>` and `:latest`, linux/amd64, with every action pinned to a commit SHA. A first step skips with a notice, instead of failing, until the Docker Hub variable and secrets exist. The deploy pins the SHA tag, never `latest` ([ADR 0006](../decisions/0006-docker-hub-not-ecr.md)).
+
+**Evidence:** both images were checked through the public Docker Hub API on 2026-10-07 (see the verification table).
+
+### 18. Teardown runbook and the architecture and cost docs (DEV-145, DEV-146, PRs #13 and #14)
+
+**What:** `docs/runbooks/teardown.md` reverses the deploy in six ordered steps: delete the root app, turn off auto-sync and delete the Ingresses while the controller still runs, wait until the load balancer is gone, remove Argo CD and the add-ons, plan then destroy, then leak check. `docs/architecture.md` has the diagram with unbuilt parts marked planned. `docs/cost.md` prices the stack from the AWS Price List with a source for each number.
+
+**Why the order matters:** if the VPC is destroyed while the controller's load balancer still exists, Terraform hangs on subnets and security groups the controller created, and the load balancer keeps billing. Waiting for "ALB gone" first avoids both.
+
+**Cost corrections found:** the earlier "$32 a month" NAT estimate was not the `eu-west-2` rate: the hourly charge alone is $36.50 a month, plus the public IPv4 address. The whole stack is about $6.11 a day without the load balancer and $7.30 with it (an estimate, not measured; actuals are still a placeholder in `docs/cost.md`).
+
 ## Best practices learned
 
 Each topic: what it is, how it works, common problems, best practice, and what this project chose.
@@ -374,6 +431,13 @@ The bigger point: in mature teams, people rarely run `kubectl` against productio
 - **A passing hook with nothing to check proves nothing.** Test every guard with a deliberate failure.
 - **Check the official docs before building a workaround.** The admin-only logout question was first answered with a complicated cache-file script. Reading the CLI reference and running one test settled it.
 - **Linear's API returned temporary 502s twice.** One "failed" save had in fact gone through, producing a duplicate line. Re-read before retrying a write.
+- **The CI plan role's OIDC trust failed until it used the immutable subject.** The first version trusted `repo:<owner>/<repo>:pull_request`. All three `terraform-plan` jobs failed at the login step with `Not authorized to perform sts:AssumeRoleWithWebIdentity`. The fix (PR #17, commit `2cce52f`) is to trust the immutable subject, which carries the numeric IDs of the owner and the repository: `repo:<owner>@<owner-id>/<repo>@<repo-id>:pull_request`. The IDs are public repository metadata, not secrets, but they are not written here. After the owner re-applied `account/`, the agent read the trust policy back through the MCP and the plan jobs passed.
+- **`TF_VAR_endpoint_public_access_cidrs` must be a Terraform list literal.** The variable is a list of strings, so the secret holds `["x.x.x.x/32"]`, not a bare CIDR. This is documented in PR #19 (open, docs only; no `.tf` change, so the plan workflow does not run on it).
+- **The Linear GitHub integration closes an issue when its PR merges, even before the owner has applied it.** DEV-133 was Done on merge on 2026-10-05, while the role in AWS still had the old trust policy. It was moved back to In Review and closed only after the read-only verification. Treat the status as a hint and the evidence as the truth.
+- **Stacked pull requests can merge into a branch instead of `main`.** PRs #6 and #10 merged into their parent branches, so DEV-141 and DEV-142 were "merged" but not on `main`. PR #11 landed them. Turning on "automatically delete head branches" in GitHub makes stacked PRs retarget to `main`.
+- **An all-digit commit SHA is read by YAML as a number.** Found while testing the chart: an unquoted tag fails the chart's guard ("must be quoted"). Quote image tags in values files.
+- **Plan output in a public repo leaks the account ID.** ARNs in plan diffs contain it, and CI logs and PR comments are public. Mask it in the workflow and replace it in the comment, and mark the IP variable `sensitive`.
+- **The sandboxed agent cannot run `terraform validate`.** The provider plugin handshake fails in the sandbox, so DEV-135 and DEV-136 were checked with fmt, trivy and kubeconform locally and left `validate` and `tflint` to CI.
 
 ## Verification evidence
 
@@ -406,12 +470,28 @@ Only items actually checked are listed as verified.
 | Add-ons | agent `DescribeAddon` | vpc-cni, eks-pod-identity-agent, kube-proxy, coredns ACTIVE |
 | envs/dev idempotent | owner's second `terraform plan` | `No changes.` |
 | Clean destroy | owner `terraform destroy` (61 resources) + agent leak check | 0 clusters, VPCs, NATs, EIPs, instances, volumes, ENIs, load balancers, EKS log groups, launch templates, cluster/node roles. Only the state bucket remains |
+| CI role trust and permissions | agent `GetRole`, 2026-10-06 | one `AssumeRoleWithWebIdentity` statement, `aud = sts.amazonaws.com`, immutable pull-request subject; `ReadOnlyAccess` plus an inline state policy (`.tflock` writes only); max session 3600 s |
+| CI role cannot change infrastructure | agent `SimulatePrincipalPolicy` | `ec2:RunInstances`, `iam:CreateRole` and non-lock `s3:PutObject`/`DeleteObject` implicitly denied; `.tflock` writes and read calls allowed |
+| CI role finding reviewed | agent read of Access Analyzer, then the owner archived it | one `ExternalAccess` finding (the expected GitHub federation), 0 active findings after archiving |
+| `account/` idempotent | CI plan after the owner's apply | `No changes. Your infrastructure matches the configuration.` (DEV-133 comment) |
+| Plan workflow | `terraform-plan` run 37392939869 on PR #17 | `plan (bootstrap)`, `plan (account)`, `plan (envs/dev)` all `success`; PR #17 carries one plan comment per root |
+| Plan workflow before the trust fix | `terraform-plan` runs 37387641357 and 37392572669 on PR #17 | `failure` at the OIDC login (the gotcha above) |
+| Gateway image on Docker Hub | public Docker Hub API, 2026-10-07 | tags `<commit sha>` and `latest`, same digest, linux/amd64, pushed 2026-10-06 (DEV-137 comment) |
+| Promscope image on Docker Hub | public Docker Hub API tag list, checked while preparing this draft | 2 tags in `crypticseeds/promscope`; `latest` linux/amd64, pushed 2026-10-05 |
+| Charts and Argo manifests, offline | helm lint, kubeconform, validation against Argo CD CRD schemas (issue comments on DEV-139, DEV-141) | 0 invalid, 0 errors; no `Secret` rendered; Services are `ClusterIP` |
+| Agent ClusterRole | read of `platform/agent-rbac/clusterrole.yaml` and the DEV-136 comment | verbs only `get`, `list`, `watch`; no `secrets`, no wildcard, no exec or port-forward |
+| Checks on `main` | `checks` runs on the merge commits of PRs #17 and #18 | `success` |
 
 **NOT YET VERIFIED:**
 
 - the agent's EKS MCP calls appearing in CloudTrail;
 - the `aws-admin-logout` function leaving the agent session intact;
-- the agent's Kubernetes RBAC (no Secrets) on a real cluster (DEV-136).
+- the agent's Kubernetes RBAC (no Secrets) on a real cluster (DEV-136): the access entry only reaches AWS at the next `envs/dev` apply;
+- Argo CD syncing `root` to Synced/Healthy, and the load balancer controller, kube-prometheus-stack and metrics-server running (DEV-141, DEV-142);
+- the gateway and Promscope running behind the ALB (DEV-143, in progress) and the observability wiring (DEV-144, not started);
+- the teardown runbook run end to end with Argo and an ALB present (DEV-145 wrote it; only the earlier 61-resource destroy was observed);
+- real cost numbers: `docs/cost.md` holds an estimate and a placeholder for actuals;
+- Definition of Done item 9 (no project resource missing `Project`, via the tagging API): cost allocation tags are not activated yet (DEV-126).
 
 ## Cost
 
@@ -445,6 +525,11 @@ pre-commit run --all-files
 terraform plan -destroy
 terraform destroy
 aws-admin-logout                    # admin only; plain "aws sso logout" logs out the agent too
+
+# read-only evidence (the Docker Hub tag list is public)
+gh pr view <n> --json state,mergedAt
+gh run list --limit 10
+curl -s "https://hub.docker.com/v2/repositories/<namespace>/<app>/tags?page_size=5"
 ```
 
 ## Repeat from scratch
@@ -461,16 +546,26 @@ aws-admin-logout                    # admin only; plain "aws sso logout" logs ou
 
 ## Open items and next steps
 
-- **DEV-131/132:** apply `envs/dev` and verify (owner applying now).
-- **DEV-130:** re-apply bootstrap for the `Application` tag; observe a `.tflock` during the dev apply.
-- **Commits:** scaffolding (DEV-127) and bootstrap (DEV-130) once verified; network and cluster (DEV-131/132) after the apply is verified. Nothing is committed yet.
+- **DEV-143 / DEV-144:** deploy the gateway and Promscope through Argo (PR #21 open) and wire observability. Not verified.
+- **Live checks for merged work:** DEV-136 (agent RBAC), DEV-141 and DEV-142 (Argo root, add-ons) need a running cluster. See [NOT YET VERIFIED](#verification-evidence).
+- **DEV-147:** this close-out. The criteria table is a draft in [03-p1-closeout-table.md](03-p1-closeout-table.md).
 - **DEV-126 (deferred):** $50/$100 budgets and activating the five cost allocation tags; check backfill for earlier spend.
-- **DEV-128:** write the ten ADRs from the decisions in this journal.
-- **DEV-136:** access entry and no-Secrets ClusterRole for the agent; prove a Secret read is refused.
-- **DEV-155:** Argo CD on the Pi 5 k3s hub, private EKS endpoint over Tailscale, machine identity; check `10.20.0.0/16` does not overlap the home LAN or tailnet routes.
-- **DEV-133/135:** GitHub OIDC plan-only role and the Terraform CI workflow, with trivy and checkov.
-- **DEV-125:** Docker Hub namespace, Doppler names, domain.
+- **DEV-155:** Argo CD on the Pi 5 k3s hub, private EKS endpoint over Tailscale, machine identity; check `10.20.0.0/16` does not overlap the home LAN or tailnet routes. Backlog; DEV-141 runs Argo on EKS for now.
+- **DEV-125:** Docker Hub namespace is in use; Doppler names and domain still open.
+- **DEV-134 (not a gate):** codify the account baseline in Terraform.
+- **PR #19:** the endpoint CIDR secret format doc, open.
 - **Owner housekeeping:** delete `docs/owner-inputs.md` and `docs/account-setup-guide.md` (superseded); the LICENSE copyright line was left as is for now.
+
+## Draft status (TODO at close-out)
+
+Only the sections below remain for the real close-out (DEV-147). They are listed, not written, because they depend on DEV-143 and DEV-144 and on live evidence that does not exist yet.
+
+- TODO at close-out: the live results for DEV-143 and DEV-144 and the NOT YET VERIFIED items above
+- TODO at close-out: the final repeat-from-scratch checklist (steps 12 to 18 are not in the list above yet)
+- TODO at close-out: first-week cost actuals from Cost Explorer
+- TODO at close-out: the destroy-or-keep decision and its leak check
+- TODO at close-out: a fresh social post draft and blog titles for the whole phase (Appendix A and B cover the 2026-10-04 part only)
+- TODO at close-out: owner confirmation of the P1 criteria table
 
 ## References
 
