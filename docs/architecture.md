@@ -76,15 +76,15 @@ flowchart LR
 | AWS Load Balancer Controller | `argocd/apps/aws-load-balancer-controller.yaml`, `envs/dev/aws-load-balancer-controller.tf` (IAM role and Pod Identity association) | built in code |
 | Argo CD | `argocd/values.yaml`, `argocd/root.yaml`, `argocd/bootstrap-project.yaml`, [ADR 0011](decisions/0011-argocd-install-by-helm.md), `docs/runbooks/deploy.md` step 4 | built in code, installed by the owner with Helm |
 | kube-prometheus-stack | `argocd/apps/kube-prometheus-stack.yaml` | built in code |
-| Gateway with mock providers | `charts/sre-inference-gateway/` (`values-dev.yaml` enables only `type: "mock"` providers) | **planned**: no Argo CD Application in `argocd/apps/` yet and no image (DEV-137) |
-| Promscope | `charts/promscope/` (`templates/service.yaml` is ClusterIP) | **planned**: no Argo CD Application in `argocd/apps/` yet and no image (DEV-138) |
+| Gateway with mock providers | `charts/sre-inference-gateway/` (`values-dev.yaml` enables only `type: "mock"` providers) | built in code (`argocd/apps/sre-inference-gateway.yaml`, image pinned by SHA); runs once the owner syncs it |
+| Promscope | `charts/promscope/` (`templates/service.yaml` is ClusterIP) | built in code (`argocd/apps/promscope.yaml`, image pinned by SHA); runs once the owner syncs it |
 | Docker Hub images | [ADR 0006](decisions/0006-docker-hub-not-ecr.md) (no file yet: the image workflows and the namespace are open) | **planned** (DEV-125, DEV-137, DEV-138) |
 | CI OIDC plan role | `account/main.tf` (`aws_iam_role.ci_plan`, `aws_iam_openid_connect_provider.github`), `docs/runbooks/account.md` | role in code; the workflow that assumes it is **planned** (DEV-135). Today `.github/workflows/checks.yml` runs static checks with no AWS access |
 | GitHub repo | `argocd/root.yaml` (`repoURL`) | exists |
 | Owner (PlatformAdmin) | `modules/cluster/main.tf` (access entry for the `PlatformAdmin` SSO role), [ADR 0002](decisions/0002-identity-center-and-read-only-agent.md) | permission sets live in Identity Center, outside this repo |
 | Agent (AgentReadOnly) | `policies/agent-readonly-inline.json`, [ADR 0002](decisions/0002-identity-center-and-read-only-agent.md) | AWS side in place. Kubernetes RBAC for the agent is **planned** (DEV-136) |
 
-Dotted arrows are runtime actions (Argo CD syncing, the controller creating the ALB). The `syncs` arrows to the gateway and Promscope are the intended wiring: those two boxes are planned.
+Dotted arrows are runtime actions (Argo CD syncing, the controller creating the ALB). The `syncs` arrows to the gateway and Promscope are in code (`argocd/apps/`); nothing runs until the owner applies and syncs.
 
 ## Trust boundaries
 
@@ -100,7 +100,7 @@ Two things to keep in mind. CI can read state and the agent cannot; that is inte
 
 ## Request flow
 
-The gateway is the only application path from the internet. Today it would work like this once DEV-137 and the gateway Argo CD Application exist:
+The gateway is the only application path from the internet. Once the gateway Argo CD Application is synced it works like this:
 
 1. A client sends HTTP to the ALB's DNS name (port 80, internet-facing, no TLS in P1).
 2. The ALB listens in the three public subnets and routes straight to pod IPs (`target-type: ip`, possible because the VPC CNI gives pods VPC addresses). Health check path is `/v1/health`. Idle timeout is 120 seconds so streaming (SSE) responses are not cut between chunks.
