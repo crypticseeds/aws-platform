@@ -4,7 +4,7 @@ Evidence that the gateway and Promscope are scraped by Prometheus, that the gate
 
 How it is wired:
 
-- Both charts ship a `ServiceMonitor` (`serviceMonitor.enabled: true` in the Argo Applications). It selects the chart's own Service by `app.kubernetes.io/name` and `app.kubernetes.io/instance`, and scrapes `/metrics` on the Service port named `metrics` (gateway, 9090) or `http` (Promscope, 8090).
+- Both charts ship a `ServiceMonitor` (`serviceMonitor.enabled: true` in the Argo Applications). It selects the chart's own Service by `app.kubernetes.io/name` and `app.kubernetes.io/instance`, and scrapes `/metrics` on the Service port named `http` for both: the gateway serves `/metrics` from its API app on port 8000 (the chart's separate `metrics` port, 9090, has no listener), and Promscope serves it on 8090.
 - Prometheus selects every ServiceMonitor in every namespace: the rendered `Prometheus` object has `serviceMonitorSelector: {}` and `serviceMonitorNamespaceSelector: {}` (from `serviceMonitorSelectorNilUsesHelmValues: false` in `argocd/apps/kube-prometheus-stack.yaml`). No `release` label is needed.
 - The gateway dashboard is the ConfigMap `gateway-dashboard` in `monitoring`, labelled `grafana_dashboard: "1"`, built by the Argo Application `grafana-dashboards` from `platform/grafana-dashboards/`. The Grafana sidecar loads it within about a minute. Its panels use the stack's default datasource, uid `prometheus`.
 
@@ -53,7 +53,7 @@ kubectl -n gateway get svc --show-labels
 kubectl -n promscope get svc --show-labels
 ```
 
-The ServiceMonitor's `spec.selector.matchLabels` must be a subset of the Service labels, and the endpoint `port` must be a Service port name (`metrics` for the gateway, `http` for Promscope). A target listed with `health="down"` and a `lastError` means the selection worked but the pod does not serve `/metrics` on that port.
+The ServiceMonitor's `spec.selector.matchLabels` must be a subset of the Service labels, and the endpoint `port` must be a Service port name (`http` for both charts). A target listed with `health="down"` and a `lastError` means the selection worked but the pod does not serve `/metrics` on that port.
 
 ## 2. Grafana lists the dashboard and a panel returns data
 
