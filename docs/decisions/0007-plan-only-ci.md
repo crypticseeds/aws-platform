@@ -1,6 +1,6 @@
 # 0007. CI runs `terraform plan` only, through an OIDC role; no apply from CI
 
-- Status: accepted (not yet implemented: DEV-133, DEV-135)
+- Status: accepted, implemented 2026-10-06 (OIDC provider and `aws-platform-ci-plan` role: PR #9, DEV-133, merged 2026-10-04 and applied; plan workflow: PR #17, DEV-135, merged 2026-10-06, run 37392939869 passed `plan (account)`, `plan (bootstrap)` and `plan (envs/dev)`)
 - Date: 2026-10-03
 
 ## Context
