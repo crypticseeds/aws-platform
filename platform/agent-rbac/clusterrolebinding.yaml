@@ -1,0 +1,14 @@
+# Binds the agent-readonly ClusterRole to the Kubernetes group set on the
+# agent's EKS access entry (modules/cluster/main.tf).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-readonly
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: agent-readonly

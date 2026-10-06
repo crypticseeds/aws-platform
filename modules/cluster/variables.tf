@@ -38,6 +38,12 @@ variable "admin_permission_set_name" {
   default     = "PlatformAdmin"
 }
 
+variable "agent_permission_set_name" {
+  description = "Identity Center permission set whose role gets read-only cluster access (no Secrets) for the agent."
+  type        = string
+  default     = "AgentReadOnly"
+}
+
 variable "node_instance_type" {
   description = "EC2 instance type for the managed node group."
   type        = string

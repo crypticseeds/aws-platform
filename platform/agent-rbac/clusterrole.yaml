@@ -1,0 +1,114 @@
+# Read-only access for the agent (Identity Center role AgentReadOnly, mapped to
+# the Kubernetes group agent-readonly by the EKS access entry in
+# modules/cluster/main.tf).
+#
+# get/list/watch only, on an explicit resource list that leaves out Secrets.
+# RBAC rules are additive and cannot say "everything except secrets", and a
+# wildcard on the core group would include them, so every group is listed
+# resource by resource.
+#
+# Derived from `kubectl api-resources` for Kubernetes 1.36 (core, apps, batch,
+# networking, policy, autoscaling, rbac, storage, apiextensions and the other
+# built-in groups) plus the CRD groups the add-ons install (monitoring.coreos.com,
+# argoproj.io, elbv2.k8s.aws). Only the primary resources are listed, plus
+# pods/log; other subresources are deliberately left out. Deliberately not
+# included:
+#   - secrets (everywhere), and the Secret-like serviceaccounts/token
+#   - every write verb, and the create-only review APIs (tokenreviews,
+#     subjectaccessreviews, ...)
+#   - pods/exec, pods/attach, pods/portforward, pods/proxy, nodes/proxy
+#   - certificates.k8s.io (CSRs), the networking.k8s.aws and vpcresources
+#     groups of the VPC CNI, flowcontrol, and the internal/aggregated APIs
+# When an add-on adds a CRD group the agent should see, add it here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-readonly
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - endpoints
+      - events
+      - limitranges
+      - namespaces
+      - nodes
+      - persistentvolumeclaims
+      - persistentvolumes
+      - pods
+      - replicationcontrollers
+      - resourcequotas
+      - serviceaccounts
+      - services
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [controllerrevisions, daemonsets, deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingressclasses, ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings, clusterroles, rolebindings, roles]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [csidrivers, csinodes, csistoragecapacities, storageclasses, volumeattachments]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources:
+      - mutatingwebhookconfigurations
+      - validatingadmissionpolicies
+      - validatingadmissionpolicybindings
+      - validatingwebhookconfigurations
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch]
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list, watch]
+  - apiGroups: [monitoring.coreos.com]
+    resources:
+      - alertmanagerconfigs
+      - alertmanagers
+      - podmonitors
+      - probes
+      - prometheusagents
+      - prometheuses
+      - prometheusrules
+      - scrapeconfigs
+      - servicemonitors
+      - thanosrulers
+    verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources: [applications, applicationsets, appprojects]
+    verbs: [get, list, watch]
+  - apiGroups: [elbv2.k8s.aws]
+    resources: [ingressclassparams, targetgroupbindings]
+    verbs: [get, list, watch]
