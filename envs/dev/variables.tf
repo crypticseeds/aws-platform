@@ -37,4 +37,6 @@ variable "node_instance_type" {
 variable "endpoint_public_access_cidrs" {
   description = "CIDRs allowed to reach the Kubernetes API, e.g. [\"203.0.113.10/32\"] for the owner's public IP. Set in terraform.tfvars (git-ignored)."
   type        = list(string)
+  # The owner's IP: keep it out of plan output, which CI posts to public PR comments and logs.
+  sensitive = true
 }

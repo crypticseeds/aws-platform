@@ -1,6 +1,6 @@
 # Runbook: static-checks CI
 
-`.github/workflows/checks.yml` runs on every pull request and on every push to `main`. It needs no AWS credentials. `terraform plan` is a separate workflow (DEV-135).
+`.github/workflows/checks.yml` runs on every pull request and on every push to `main`. It needs no AWS credentials. `terraform plan` is a separate workflow, see below.
 
 ## What runs
 
@@ -16,6 +16,21 @@
 "Blocking" means branch protection on `main` requires the job (set by the owner). Advisory jobs never fail on findings, only when the tool itself breaks.
 
 Every chart needs `values-dev.yaml` and `ci/test-values.yaml`; the chart loop fails if either is missing. `ci/test-values.yaml` supplies the values that are required at install time (image repository and tag) and is never deployed.
+
+## Terraform plan on pull requests (DEV-135)
+
+`.github/workflows/terraform-plan.yml` runs on pull requests that touch `**/*.tf`, `**/*.tfvars.example`, `**/.terraform.lock.hcl` or the workflow itself. For each root (`bootstrap`, `account`, `envs/dev`) it runs `terraform init`, `validate` and `plan` (with the normal S3 lock: the role may write and delete only `*.tflock` objects, ADR 0007), then posts the plan as one PR comment per root. A hidden marker (`<!-- terraform-plan:<root> -->`) lets later pushes edit the same comment instead of adding new ones; output over 60000 bytes is truncated with a link to the run. Formatting, tflint, trivy and checkov stay in `checks.yml`.
+
+It authenticates to AWS through GitHub OIDC (`aws-actions/configure-aws-credentials`, region `eu-west-2`) and needs, set by the owner:
+
+- repository **secret** `AWS_CI_PLAN_ROLE_ARN`: the read-only role the workflow assumes (a secret, so GitHub masks the account ID in it; no account ID lives in the repo)
+- repository **secret** `TF_VAR_endpoint_public_access_cidrs`: the value for `envs/dev` (GitHub masks it in logs); the other roots do not use it
+
+Until the role secret exists, or on a pull request from a fork (no OIDC token), each job prints a `::notice` and succeeds without planning.
+
+The workflow never applies. Changes reach AWS only through an owner-run `terraform apply` after review, so a pull request, a fork or a compromised action can never change infrastructure: the role is read-only apart from the state lock file.
+
+Because the repo is public, its Actions logs and PR comments are public too. The workflow masks the AWS account ID in logs (`mask-aws-account-id`) and replaces it with `<account-id>` in plan comments. `envs/dev`'s `endpoint_public_access_cidrs` is marked `sensitive`, so the owner's IP shows as `(sensitive value)` in plans.
 
 ## Exceptions
 
