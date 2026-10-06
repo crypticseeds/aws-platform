@@ -1,0 +1,24 @@
+# Grafana dashboards as ConfigMaps for the kube-prometheus-stack sidecar, which
+# loads every ConfigMap labelled grafana_dashboard: "1" (see
+# argocd/apps/kube-prometheus-stack.yaml).
+#
+# gateway-dashboard.json is infra/grafana/gateway-dashboard.json from
+# crypticseeds/sre-inference-gateway at
+# eb87ca19827c5d041cfe8103c3c5de377feee425 (the commit of the image the
+# gateway chart runs). Changes against upstream, nothing else:
+#   - removed the "__inputs" block (only the Grafana import UI resolves it)
+#   - datasource uid "${DS_PROMETHEUS}" -> "prometheus", the uid the stack
+#     gives its default Prometheus datasource (grafana.sidecar.datasources.uid)
+# Re-sync from upstream when the gateway image moves.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+generatorOptions:
+  # Stable name: the sidecar does not care, and Argo CD shows a clean diff.
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+configMapGenerator:
+  - name: gateway-dashboard
+    files:
+      - gateway-dashboard.json
