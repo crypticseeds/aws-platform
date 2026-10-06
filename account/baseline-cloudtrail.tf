@@ -52,7 +52,11 @@ import {
   id = local.trail_bucket
 }
 
-# Live: SSE-S3 (AES256), bucket key off, SSE-C blocked.
+# Live: SSE-S3 (AES256), bucket key off, SSE-C blocked. A customer-managed KMS
+# key would add cost and a second permission layer while one account and one
+# owner read these logs, same reasoning as the state bucket (bootstrap).
+# Accepted trivy finding AWS-0132 (no customer-managed key).
+# trivy:ignore:AWS-0132
 resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail_logs" {
   bucket = aws_s3_bucket.cloudtrail_logs.id
 
@@ -128,7 +132,10 @@ import {
 }
 
 # Live: multi-region, global service events, log file validation, management
-# events only (advanced selector), no CloudWatch Logs, SNS or KMS.
+# events only (advanced selector), no CloudWatch Logs, SNS or KMS. The logs are
+# encrypted with SSE-S3 on the bucket (see above); a CMK would add cost for no
+# extra control here. Accepted trivy finding AWS-0015.
+# trivy:ignore:AWS-0015
 resource "aws_cloudtrail" "account" {
   name                          = local.trail_name
   s3_bucket_name                = aws_s3_bucket.cloudtrail_logs.id
@@ -151,5 +158,7 @@ resource "aws_cloudtrail" "account" {
 
 import {
   to = aws_cloudtrail.account
-  id = local.trail_name
+  # aws_cloudtrail imports by ARN in the pinned AWS provider; the trail name is
+  # rejected ("could not parse import ID as ARN").
+  id = local.trail_arn
 }
