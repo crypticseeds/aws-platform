@@ -1,0 +1,51 @@
+# SRE inference gateway (chart charts/sre-inference-gateway from this repo).
+# Mock providers only: no LLM API keys exist in this deployment.
+#
+# Exposure: its Ingress joins the ALB group aws-platform-dev (set in
+# charts/sre-inference-gateway/values-dev.yaml), so the AWS Load Balancer
+# Controller (wave -2) builds one internet-facing ALB for the platform.
+#
+# Before the first sync the owner creates the Secret dockerhub-pull in the
+# gateway namespace from Doppler (docs/runbooks/deploy.md, section 6). The
+# Docker Hub repository is public: the Secret only lifts anonymous pull rate
+# limits. If it is missing, the kubelet logs a warning event and pulls
+# anonymously, so the pods still start.
+#
+# Wave 0: after the Load Balancer Controller webhooks (-2) and the monitoring
+# CRDs (-1), which the ServiceMonitor needs.
+#
+# To release a new image, change image.tag below in a PR (runbook, section 6).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sre-inference-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: aws-platform
+  source:
+    repoURL: https://github.com/crypticseeds/aws-platform.git
+    targetRevision: main
+    path: charts/sre-inference-gateway
+    helm:
+      releaseName: sre-inference-gateway
+      valueFiles:
+        - values-dev.yaml
+      valuesObject:
+        image:
+          repository: crypticseeds/sre-inference-gateway
+          # Git SHA of the image built by the Image workflow. Quoted on
+          # purpose; never "latest".
+          tag: "eb87ca19827c5d041cfe8103c3c5de377feee425"
+        serviceMonitor:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -179,7 +179,97 @@ The controller's IAM role and its Pod Identity association are part of `envs/dev
 
 Prometheus keeps 2 days of data on an emptyDir, and Grafana has no volume either: both start empty after a pod restart or a rebuild. Dashboards come from ConfigMaps labelled `grafana_dashboard: "1"` in any namespace.
 
-## 6. End of session
+## 6. Gateway and Promscope (owner)
+
+The root app also creates `sre-inference-gateway` (namespace `gateway`) and `promscope` (namespace `promscope`) from `argocd/apps/`, sync wave 0, after the controller (-2) and kube-prometheus-stack (-1). The gateway's Ingress joins the ALB group `aws-platform-dev`, so the controller builds one internet-facing ALB on port 80. Promscope has no Ingress (ClusterIP only, no authentication). Both images are pinned to a git SHA in the Application's `valuesObject`.
+
+Both Docker Hub repositories are public. The Secret `dockerhub-pull` only lifts anonymous pull rate limits. Both charts reference it through `imagePullSecrets`. If it does not exist, the pods still start: the kubelet logs a warning event on the pod and pulls anonymously. Create it before the first sync anyway.
+
+**Before the first sync:** store a Docker Hub username and an access token (read-only scope) in Doppler as `DOCKERHUB_PULL_USERNAME` and `DOCKERHUB_PULL_TOKEN` (the pull credentials; the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` pair is the push credential used by the image workflows in GitHub Actions).
+
+1. Create the namespaces and the pull Secret in each. The values go from Doppler to `kubectl` through stdin, so they never appear in your terminal, shell history or the process list (`printf` is a builtin). Run it where `doppler setup` points at the config with the secrets (or add `-p <project> -c <config>`):
+
+   ```
+   kubectl create namespace gateway
+   kubectl create namespace promscope
+   doppler run --only-secrets DOCKERHUB_PULL_USERNAME,DOCKERHUB_PULL_TOKEN -- sh -c 'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_PULL_USERNAME" "$DOCKERHUB_PULL_TOKEN" | kubectl -n gateway create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
+   doppler run --only-secrets DOCKERHUB_PULL_USERNAME,DOCKERHUB_PULL_TOKEN -- sh -c 'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_PULL_USERNAME" "$DOCKERHUB_PULL_TOKEN" | kubectl -n promscope create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
+   ```
+
+   `describe` shows only the key name and size. Expect type `kubernetes.io/dockerconfigjson` and the key `.dockerconfigjson`:
+
+   ```
+   kubectl -n gateway describe secret dockerhub-pull
+   kubectl -n promscope describe secret dockerhub-pull
+   ```
+
+   The Applications set `CreateNamespace=true`, which does nothing when the namespace already exists.
+
+2. Watch both sync. The two Applications appear only after the root app has created them, which waits for the Load Balancer Controller (wave -2) and kube-prometheus-stack (wave -1) to be Healthy. Wait until the first command lists both, then run the rollout commands:
+
+   ```
+   kubectl -n argocd get applications
+   kubectl -n gateway rollout status deployment/sre-inference-gateway
+   kubectl -n promscope rollout status deployment/promscope
+   ```
+
+   The controller needs about 2-3 minutes to create the ALB after the Ingress appears.
+
+### Release a new image (tag bump)
+
+1. Find the new SHA: the run of the `Image` workflow in the app's GitHub repository (Actions tab, the run for the commit; the tag is the full 40-character commit SHA), or the tag list on Docker Hub (`crypticseeds/sre-inference-gateway`, `crypticseeds/promscope`). Never use `latest`.
+2. Open a PR that changes only `image.tag` (keep the quotes) in `argocd/apps/sre-inference-gateway.yaml` or `argocd/apps/promscope.yaml`. CI lints and renders the charts with test values but does not check the tag, so a mistyped or non-existent SHA still passes and only fails as `ImagePullBackOff` after the sync (the rolling update keeps the old pods running). Before merging, confirm the tag exists on Docker Hub (the Tags page, or `docker manifest inspect crypticseeds/<repo>:<sha>` from the Mac); review and merge.
+3. Argo CD syncs `main` by itself (automated sync, about 3 minutes, or press Refresh in the UI). Check the rollout and the running image:
+
+   ```
+   kubectl -n gateway rollout status deployment/sre-inference-gateway
+   kubectl -n gateway get deployment sre-inference-gateway -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+   ```
+
+   Use `-n promscope` and `deployment/promscope` for Promscope. The PodDisruptionBudget keeps one replica serving during the rollout.
+
+To roll back, revert the PR.
+
+### Verification (owner, with the agent's read-only MCP)
+
+(a) Both Applications are `Synced` and `Healthy`:
+
+```
+kubectl -n argocd get applications
+```
+
+(b) Pods reference the pull Secret and run the pinned SHA:
+
+```
+kubectl -n gateway get pod -l app.kubernetes.io/name=sre-inference-gateway -o jsonpath='{.items[*].spec.imagePullSecrets}{"\n"}'
+kubectl -n gateway get pod -l app.kubernetes.io/name=sre-inference-gateway -o jsonpath='{.items[*].spec.containers[0].image}{"\n"}'
+kubectl -n promscope get pod -l app.kubernetes.io/name=promscope -o jsonpath='{.items[*].spec.imagePullSecrets}{"\n"}'
+kubectl -n promscope get pod -l app.kubernetes.io/name=promscope -o jsonpath='{.items[*].spec.containers[0].image}{"\n"}'
+```
+
+Expect `[{"name":"dockerhub-pull"}]` per pod, and the image tags equal to the `image.tag` in the two Applications.
+
+(c) Agent, MCP (`eu-west-2`): `DescribeLoadBalancers` shows exactly one internet-facing `application` load balancer for this cluster. `DescribeTags` (or Resource Groups Tagging `GetResources`) on its ARN shows the `defaultTags` (`Project=aws-platform`, `Application=platform`, `Environment=dev`, `ManagedBy=aws-load-balancer-controller`); `DescribeLoadBalancers` itself returns no tags. `DescribeTargetHealth` on its target group shows every target `healthy`, one per gateway pod. A second ALB means an Ingress is missing `group.name`.
+
+(d) Health through the ALB (the DNS name is in `kubectl -n gateway get ingress`, column ADDRESS):
+
+```
+curl -s -o /dev/null -w '%{http_code}\n' http://<alb-dns>/v1/health
+```
+
+Expect `200`.
+
+(e) Streaming. Dev has only the mock model `mock-model` (3 content chunks, 0.05 s apart). Expect several `data:` lines and a last `data: [DONE]`:
+
+```
+curl -N -H 'Content-Type: application/json' -d '{"model":"mock-model","messages":[{"role":"user","content":"hello"}],"stream":true}' http://<alb-dns>/v1/chat/completions
+```
+
+(f) One tag bump done through a PR, as in "Release a new image" above. Record the PR and the old and new tag in the journal.
+
+Promscope is reached only with a port-forward: `kubectl -n promscope port-forward svc/promscope 8090:8090`, then `http://localhost:8090/mcp`. Prometheus targets for both ServiceMonitors can be checked with the port-forward in section 5 (Status, Targets).
+
+## 7. End of session
 
 The environment costs roughly $6-7 a day while it runs, so destroy it when you finish. Review the destroy plan first:
 
