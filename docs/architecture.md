@@ -76,8 +76,8 @@ flowchart LR
 | AWS Load Balancer Controller | `argocd/apps/aws-load-balancer-controller.yaml`, `envs/dev/aws-load-balancer-controller.tf` (IAM role and Pod Identity association) | built in code |
 | Argo CD | `argocd/values.yaml`, `argocd/root.yaml`, `argocd/bootstrap-project.yaml`, [ADR 0011](decisions/0011-argocd-install-by-helm.md), `docs/runbooks/deploy.md` step 4 | built in code, installed by the owner with Helm |
 | kube-prometheus-stack | `argocd/apps/kube-prometheus-stack.yaml` | built in code |
-| Gateway with mock providers | `charts/sre-inference-gateway/` (`values-dev.yaml` enables only `type: "mock"` providers) | **planned**: no Argo CD Application in `argocd/apps/` yet. The image is published (gateway PR #30, DEV-137, 2026-10-06) |
-| Promscope | `charts/promscope/` (`templates/service.yaml` is ClusterIP) | **planned**: no Argo CD Application in `argocd/apps/` yet. The image is published (promscope PR #1, DEV-138, 2026-10-05) |
+| Gateway with mock providers | `charts/sre-inference-gateway/` (`values-dev.yaml` enables only `type: "mock"` providers) | **planned**: no Argo CD Application in `argocd/apps/` yet and no image (DEV-137) |
+| Promscope | `charts/promscope/` (`templates/service.yaml` is ClusterIP) | **planned**: no Argo CD Application in `argocd/apps/` yet and no image (DEV-138) |
 | Docker Hub images | [ADR 0006](decisions/0006-docker-hub-not-ecr.md), `crypticseeds/sre-inference-gateway` and `crypticseeds/promscope` on Docker Hub (built and pushed by workflows in the app repos) | published 2026-10-05 and 2026-10-06 (promscope PR #1, gateway PR #30); namespace decided (DEV-125) |
 | CI OIDC plan role | `account/main.tf` (`aws_iam_role.ci_plan`, `aws_iam_openid_connect_provider.github`), `.github/workflows/terraform-plan.yml`, `docs/runbooks/account.md` | in code and in use: role (PR #9, DEV-133) and plan-only workflow (PR #17, DEV-135, merged 2026-10-06; run 37392939869 passed all three plan jobs). `.github/workflows/checks.yml` runs static checks with no AWS access |
 | GitHub repo | `argocd/root.yaml` (`repoURL`) | exists |
@@ -100,7 +100,7 @@ Two things to keep in mind. CI can read state and the agent cannot; that is inte
 
 ## Request flow
 
-The gateway is the only application path from the internet. Today it would work like this once the gateway Argo CD Application exists (the image is published, DEV-137):
+The gateway is the only application path from the internet. Today it would work like this once DEV-137 and the gateway Argo CD Application exist:
 
 1. A client sends HTTP to the ALB's DNS name (port 80, internet-facing, no TLS in P1).
 2. The ALB listens in the three public subnets and routes straight to pod IPs (`target-type: ip`, possible because the VPC CNI gives pods VPC addresses). Health check path is `/v1/health`. Idle timeout is 120 seconds so streaming (SSE) responses are not cut between chunks.
