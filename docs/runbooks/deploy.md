@@ -183,7 +183,7 @@ Prometheus keeps 2 days of data on an emptyDir, and Grafana has no volume either
 
 ## 6. Gateway and Promscope (owner)
 
-The root app also creates `sre-inference-gateway` (namespace `gateway`) and `promscope` (namespace `promscope`) from `argocd/apps/`, sync wave 0, after the controller (-2) and kube-prometheus-stack (-1). The gateway's Ingress joins the ALB group `aws-platform-dev`, so the controller builds one internet-facing ALB on port 80. Promscope has no Ingress (ClusterIP only, no authentication). Both images are pinned to a git SHA in the Application's `valuesObject`.
+The root app also creates `sre-inference-gateway` (namespace `gateway`) and `promscope` (namespace `promscope`) from `argocd/apps/`, sync wave 0, after the controller (-2) and kube-prometheus-stack (-1). The gateway's Ingress joins the ALB group `aws-platform-dev`, so the controller builds one internet-facing ALB on port 80. Its security group `aws-platform-dev-gateway-alb` (`envs/dev/gateway-alb.tf`, created by the apply in section 2) allows port 80 only from `endpoint_public_access_cidrs`, so only your IP reaches the gateway (DEV-164). Promscope has no Ingress (ClusterIP only, no authentication). Both images are pinned to a git SHA in the Application's `valuesObject`.
 
 Both Docker Hub repositories are public. The Secret `dockerhub-pull` only lifts anonymous pull rate limits. Both charts reference it through `imagePullSecrets`. If it does not exist, the pods still start: the kubelet logs a warning event on the pod and pulls anonymously. Create it before the first sync anyway.
 
@@ -251,7 +251,7 @@ kubectl -n promscope get pod -l app.kubernetes.io/name=promscope -o jsonpath='{.
 
 Expect `[{"name":"dockerhub-pull"}]` per pod, and the image tags equal to the `image.tag` in the two Applications.
 
-(c) Agent, MCP (`eu-west-2`): `DescribeLoadBalancers` shows exactly one internet-facing `application` load balancer for this cluster. `DescribeTags` (or Resource Groups Tagging `GetResources`) on its ARN shows the `defaultTags` (`Project=aws-platform`, `Application=platform`, `Environment=dev`, `ManagedBy=aws-load-balancer-controller`); `DescribeLoadBalancers` itself returns no tags. `DescribeTargetHealth` on its target group shows every target `healthy`, one per gateway pod. A second ALB means an Ingress is missing `group.name`.
+(c) Agent, MCP (`eu-west-2`): `DescribeLoadBalancers` shows exactly one internet-facing `application` load balancer for this cluster. `DescribeTags` (or Resource Groups Tagging `GetResources`) on its ARN shows the `defaultTags` (`Project=aws-platform`, `Application=platform`, `Environment=dev`, `ManagedBy=aws-load-balancer-controller`); `DescribeLoadBalancers` itself returns no tags. `DescribeTargetHealth` on its target group shows every target `healthy`, one per gateway pod. A second ALB means an Ingress is missing `group.name`. `DescribeSecurityGroups` on the ALB's group (`aws-platform-dev-gateway-alb`) shows port 80 open only to your `/32`, never `0.0.0.0/0`.
 
 (d) Health through the ALB (the DNS name is in `kubectl -n gateway get ingress`, column ADDRESS):
 
@@ -259,7 +259,7 @@ Expect `[{"name":"dockerhub-pull"}]` per pod, and the image tags equal to the `i
 curl -s -o /dev/null -w '%{http_code}\n' http://<alb-dns>/v1/health
 ```
 
-Expect `200`.
+Expect `200`. From any other IP (for example a phone on mobile data) the request must time out.
 
 (e) Streaming. Dev has only the mock model `mock-model` (3 content chunks, 0.05 s apart). Expect several `data:` lines and a last `data: [DONE]`:
 
