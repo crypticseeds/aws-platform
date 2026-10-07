@@ -105,7 +105,7 @@ The gateway is the only application path from the internet. Once the gateway Arg
 1. A client sends HTTP to the ALB's DNS name (port 80, internet-facing, no TLS in P1).
 2. The ALB listens in the three public subnets and routes straight to pod IPs (`target-type: ip`, possible because the VPC CNI gives pods VPC addresses). Health check path is `/v1/health`. Idle timeout is 120 seconds so streaming (SSE) responses are not cut between chunks.
 3. The gateway pod picks a provider by weight. In dev, both providers are mocks (`mock_openai`, `mock_vllm`, weight 0.5 each) running inside the gateway process, so there is no outbound LLM call and no API key anywhere in the deployment.
-4. Prometheus scrapes the gateway's metrics port through a ServiceMonitor.
+4. Prometheus scrapes `/metrics` on the gateway's API port (`http`, 8000) through a ServiceMonitor.
 
 All Ingresses share the group name `aws-platform-dev`, so any later app joins the same ALB instead of paying for another.
 

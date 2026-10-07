@@ -205,7 +205,7 @@ Both Docker Hub repositories are public. The Secret `dockerhub-pull` only lifts 
 
    The Applications set `CreateNamespace=true`, which does nothing when the namespace already exists.
 
-2. Watch both sync:
+2. Watch both sync. The two Applications appear only after the root app has created them, which waits for the Load Balancer Controller (wave -2) and kube-prometheus-stack (wave -1) to be Healthy. Wait until the first command lists both, then run the rollout commands:
 
    ```
    kubectl -n argocd get applications
@@ -218,7 +218,7 @@ Both Docker Hub repositories are public. The Secret `dockerhub-pull` only lifts 
 ### Release a new image (tag bump)
 
 1. Find the new SHA: the run of the `Image` workflow in the app's GitHub repository (Actions tab, the run for the commit; the tag is the full 40-character commit SHA), or the tag list on Docker Hub (`crypticseeds/sre-inference-gateway`, `crypticseeds/promscope`). Never use `latest`.
-2. Open a PR that changes only `image.tag` (keep the quotes) in `argocd/apps/sre-inference-gateway.yaml` or `argocd/apps/promscope.yaml`. CI renders the chart; review and merge it.
+2. Open a PR that changes only `image.tag` (keep the quotes) in `argocd/apps/sre-inference-gateway.yaml` or `argocd/apps/promscope.yaml`. CI lints and renders the charts with test values but does not check the tag, so a mistyped or non-existent SHA still passes and only fails as `ImagePullBackOff` after the sync (the rolling update keeps the old pods running). Before merging, confirm the tag exists on Docker Hub (the Tags page, or `docker manifest inspect crypticseeds/<repo>:<sha>` from the Mac); review and merge.
 3. Argo CD syncs `main` by itself (automated sync, about 3 minutes, or press Refresh in the UI). Check the rollout and the running image:
 
    ```
@@ -249,7 +249,7 @@ kubectl -n promscope get pod -l app.kubernetes.io/name=promscope -o jsonpath='{.
 
 Expect `[{"name":"dockerhub-pull"}]` per pod, and the image tags equal to the `image.tag` in the two Applications.
 
-(c) Agent, MCP (`eu-west-2`): `DescribeLoadBalancers` shows exactly one internet-facing `application` load balancer for this cluster, with the `defaultTags` (`Project=aws-platform`, `Application=platform`, `Environment=dev`, `ManagedBy=aws-load-balancer-controller`). `DescribeTargetHealth` on its target group shows every target `healthy`, one per gateway pod. A second ALB means an Ingress is missing `group.name`.
+(c) Agent, MCP (`eu-west-2`): `DescribeLoadBalancers` shows exactly one internet-facing `application` load balancer for this cluster. `DescribeTags` (or Resource Groups Tagging `GetResources`) on its ARN shows the `defaultTags` (`Project=aws-platform`, `Application=platform`, `Environment=dev`, `ManagedBy=aws-load-balancer-controller`); `DescribeLoadBalancers` itself returns no tags. `DescribeTargetHealth` on its target group shows every target `healthy`, one per gateway pod. A second ALB means an Ingress is missing `group.name`.
 
 (d) Health through the ALB (the DNS name is in `kubectl -n gateway get ingress`, column ADDRESS):
 
