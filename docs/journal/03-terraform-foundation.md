@@ -549,7 +549,7 @@ curl -s "https://hub.docker.com/v2/repositories/<namespace>/<app>/tags?page_size
 - **DEV-143 / DEV-144:** deploy the gateway and Promscope through Argo (PR #21 open) and wire observability. Not verified.
 - **Live checks for merged work:** DEV-136 (agent RBAC), DEV-141 and DEV-142 (Argo root, add-ons) need a running cluster. See [NOT YET VERIFIED](#verification-evidence).
 - **DEV-147:** this close-out. The criteria table is a draft in [03-p1-closeout-table.md](03-p1-closeout-table.md).
-- **DEV-126 (deferred):** $50/$100 budgets and activating the five cost allocation tags; check backfill for earlier spend.
+- **DEV-126:** the project cost alert is in code (`envs/dev/budget.tf`: emails at $30 and $50 a month of `Project=aws-platform` spend; it replaces the deferred $50/$100 plan). It needs the `Project` cost allocation tag activated in Billing, once, by the owner; that was verified Inactive on 2026-10-07. The other four tags are optional (grouping in Cost Explorer).
 - **DEV-155:** Argo CD on the Pi 5 k3s hub, private EKS endpoint over Tailscale, machine identity; check `10.20.0.0/16` does not overlap the home LAN or tailnet routes. Backlog; DEV-141 runs Argo on EKS for now.
 - **DEV-125:** Docker Hub namespace is in use; Doppler names and domain still open.
 - **DEV-134 (not a gate):** codify the account baseline in Terraform.

@@ -68,7 +68,7 @@ If the gateway is not yet deployed, there is no ALB: remove the ALB, LCU and 3 I
 
 Almost the whole bill is per running hour, and the largest items (EKS control plane, NAT gateway, ALB, nodes) have no idle mode. The control plane alone is $73 a month if left up. So the discipline is: apply at the start of a session, destroy at the end, in the order of the teardown runbook (apps and the Load Balancer Controller first, so the ALB and its security groups are gone before the VPC is deleted; [ADR 0011](decisions/0011-argocd-install-by-helm.md), DEV-145). A forgotten stack costs about $7.30 a day.
 
-Safety nets: the account's billing budgets and the Cost Anomaly Detection monitor (daily summaries, alerts above $5) described in the account baseline journal.
+Safety nets: the account's billing budgets and the Cost Anomaly Detection monitor (daily summaries, alerts above $5) described in the account baseline journal, plus a project budget in `envs/dev/budget.tf` that emails at $30 and again at $50 of monthly spend on resources tagged `Project=aws-platform`. It is created and destroyed with the environment, and needs the `Project` cost allocation tag activated in Billing.
 
 ## Where this differs from the earlier estimates
 

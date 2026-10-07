@@ -2,6 +2,9 @@
 # Your current public IP: curl -s https://checkip.amazonaws.com
 endpoint_public_access_cidrs = ["<your-ip>/32"]
 
+# Recipients of the project cost alert (budget.tf): emailed at $30 and $50 of monthly spend.
+cost_alert_emails = ["<your-email>"]
+
 # Optional overrides (defaults shown):
 # az_count           = 3
 # kubernetes_version = "1.36"

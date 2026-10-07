@@ -2,8 +2,8 @@
 # Static checks (fmt, tflint, trivy, checkov) live in checks.yml; this workflow only runs
 # init, validate and plan per root and posts the plan as one PR comment per root.
 # Needs the repository secrets AWS_CI_PLAN_ROLE_ARN (OIDC role) and, for envs/dev,
-# TF_VAR_endpoint_public_access_cidrs. Skips with a notice when the role secret is unset or
-# the PR comes from a fork. See docs/runbooks/ci.md.
+# TF_VAR_endpoint_public_access_cidrs and TF_VAR_COST_ALERT_EMAILS. Skips with a notice when
+# the role secret is unset or the PR comes from a fork. See docs/runbooks/ci.md.
 name: terraform-plan
 
 on:
@@ -37,9 +37,10 @@ jobs:
       matrix:
         root: [bootstrap, account, envs/dev]
     env:
-      # Only envs/dev declares this variable; Terraform ignores undeclared TF_VAR_* elsewhere.
-      # GitHub masks the secret in logs.
+      # Only envs/dev declares these variables; Terraform ignores undeclared TF_VAR_* elsewhere.
+      # GitHub masks the secrets in logs.
       TF_VAR_endpoint_public_access_cidrs: ${{ secrets.TF_VAR_endpoint_public_access_cidrs }}
+      TF_VAR_cost_alert_emails: ${{ secrets.TF_VAR_COST_ALERT_EMAILS }}
     steps:
       - name: Check plan prerequisites
         id: gate
