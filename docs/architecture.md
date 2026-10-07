@@ -78,11 +78,11 @@ flowchart LR
 | kube-prometheus-stack | `argocd/apps/kube-prometheus-stack.yaml` | built in code |
 | Gateway with mock providers | `charts/sre-inference-gateway/` (`values-dev.yaml` enables only `type: "mock"` providers) | built in code (`argocd/apps/sre-inference-gateway.yaml`, image pinned by SHA); runs once the owner syncs it |
 | Promscope | `charts/promscope/` (`templates/service.yaml` is ClusterIP) | built in code (`argocd/apps/promscope.yaml`, image pinned by SHA); runs once the owner syncs it |
-| Docker Hub images | [ADR 0006](decisions/0006-docker-hub-not-ecr.md) (no file yet: the image workflows and the namespace are open) | **planned** (DEV-125, DEV-137, DEV-138) |
-| CI OIDC plan role | `account/main.tf` (`aws_iam_role.ci_plan`, `aws_iam_openid_connect_provider.github`), `docs/runbooks/account.md` | role in code; the workflow that assumes it is **planned** (DEV-135). Today `.github/workflows/checks.yml` runs static checks with no AWS access |
+| Docker Hub images | [ADR 0006](decisions/0006-docker-hub-not-ecr.md), `crypticseeds/sre-inference-gateway` and `crypticseeds/promscope` on Docker Hub (built and pushed by workflows in the app repos) | published 2026-10-05 and 2026-10-06 (promscope PR #1, gateway PR #30); namespace decided (DEV-125) |
+| CI OIDC plan role | `account/main.tf` (`aws_iam_role.ci_plan`, `aws_iam_openid_connect_provider.github`), `.github/workflows/terraform-plan.yml`, `docs/runbooks/account.md` | in code and in use: role (PR #9, DEV-133) and plan-only workflow (PR #17, DEV-135, merged 2026-10-06; run 37392939869 passed all three plan jobs). `.github/workflows/checks.yml` runs static checks with no AWS access |
 | GitHub repo | `argocd/root.yaml` (`repoURL`) | exists |
 | Owner (PlatformAdmin) | `modules/cluster/main.tf` (access entry for the `PlatformAdmin` SSO role), [ADR 0002](decisions/0002-identity-center-and-read-only-agent.md) | permission sets live in Identity Center, outside this repo |
-| Agent (AgentReadOnly) | `policies/agent-readonly-inline.json`, [ADR 0002](decisions/0002-identity-center-and-read-only-agent.md) | AWS side in place. Kubernetes RBAC for the agent is **planned** (DEV-136) |
+| Agent (AgentReadOnly) | `policies/agent-readonly-inline.json`, [ADR 0002](decisions/0002-identity-center-and-read-only-agent.md) | AWS side in place. Kubernetes RBAC for the agent is in code (`platform/agent-rbac/`, `argocd/apps/agent-rbac.yaml`, access entry in `modules/cluster/main.tf`; PR #18, DEV-136, merged 2026-10-06), not yet verified on a running cluster |
 
 Dotted arrows are runtime actions (Argo CD syncing, the controller creating the ALB). The `syncs` arrows to the gateway and Promscope are in code (`argocd/apps/`); nothing runs until the owner applies and syncs.
 
@@ -96,7 +96,7 @@ Three identities, three different reach. All short-lived credentials, no access 
 | Agent, `AgentReadOnly` | Read AWS and EKS through the managed AWS and EKS MCP servers | Write anything, read Secrets Manager values, decrypt, read state objects (`*tfstate*`) | Own SSO user that can hold only this permission set. CloudTrail marks its calls `invokedBy: aws-mcp.amazonaws.com` |
 | CI, `aws-platform-ci-plan` | `terraform plan`: `ReadOnlyAccess`, read state, create and delete only `*.tflock` objects | Apply, destroy, or be assumed by anything but this repo's pull request workflows | GitHub OIDC, `aud = sts.amazonaws.com`, `sub = repo:<repo>:pull_request`, 1-hour sessions |
 
-Two things to keep in mind. CI can read state and the agent cannot; that is intended, a plan needs state. And the agent's Kubernetes access has no RBAC yet (DEV-136), so for now the agent sees the cluster only through the AWS-level EKS read tools.
+Two things to keep in mind. CI can read state and the agent cannot; that is intended, a plan needs state. And the agent's Kubernetes access is read-only RBAC (DEV-136, merged 2026-10-06) with no Secret reads; it has not been exercised on a running cluster yet.
 
 ## Request flow
 

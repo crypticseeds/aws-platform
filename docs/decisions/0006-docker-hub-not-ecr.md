@@ -1,6 +1,6 @@
 # 0006. Docker Hub for application images, no ECR
 
-- Status: accepted (not yet implemented: DEV-125, DEV-137, DEV-138)
+- Status: accepted, implemented 2026-10-06 (image workflows: promscope PR #1, DEV-138, merged 2026-10-05; gateway PR #30, DEV-137, merged 2026-10-06; namespace decided, DEV-125)
 - Date: 2026-10-03
 
 ## Context
@@ -21,7 +21,7 @@ An ECR image URI contains the AWS account ID (`<account>.dkr.ecr.eu-west-2.amazo
 - Images live outside AWS: pulls go through the NAT gateway ([0004](0004-single-nat-gateway.md)), and Docker Hub's pull rate limits apply.
 - If an image is private, the cluster needs an image pull secret. That secret is created from Doppler by the owner and referenced by name, never committed (README, journal 01).
 - The node role already has `AmazonEC2ContainerRegistryReadOnly` (attached by the EKS module), which goes unused.
-- The Docker Hub namespace is still an open owner input (DEV-125), so the image workflows are blocked until it is chosen.
+- The Docker Hub namespace was an open owner input (DEV-125) when this was written. It is decided: the namespace is the owner's Docker Hub username, `crypticseeds`. Both repositories are public and carry linux/amd64 images tagged with the git SHA plus `latest` (checked 2026-10-07 on the Docker Hub tags API).
 
 ## Alternatives
 
