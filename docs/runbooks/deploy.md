@@ -26,6 +26,8 @@ If your home IP changes later, `kubectl` times out. Update `terraform.tfvars` an
 
 ## 2. Plan and apply (owner)
 
+Two things first. `terraform.tfvars` needs `cost_alert_emails = ["you@example.com"]` (see `terraform.tfvars.example`): the project budget in `budget.tf` emails you when spend on resources tagged `Project=aws-platform` passes $30 in the month, and again at $50. And in the Billing console (Cost allocation tags) activate the `Project` tag, once. It is an account setting, so it stays on after a destroy. Until it is active the budget sees no spend and never alerts; tag data appears within about a day of activating it.
+
 ```
 aws sso login --profile platform-admin        # shortcut: aws-admin-login
 export AWS_PROFILE=platform-admin
@@ -37,7 +39,7 @@ terraform apply dev.tfplan
 terraform plan
 ```
 
-Check the first plan before applying: only additions, **0 to change, 0 to destroy**, and exactly one `aws_nat_gateway`. The apply takes about 15-20 minutes, most of it the EKS control plane. The last `terraform plan` must print `No changes.`
+Check the first plan before applying: only additions, **0 to change, 0 to destroy**, exactly one `aws_nat_gateway` and one `aws_budgets_budget`. The apply takes about 15-20 minutes, most of it the EKS control plane. The last `terraform plan` must print `No changes.`
 
 Delete the saved plan afterwards. It is git-ignored, but plan files can contain sensitive values:
 

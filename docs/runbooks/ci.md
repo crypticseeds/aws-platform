@@ -25,6 +25,7 @@ It authenticates to AWS through GitHub OIDC (`aws-actions/configure-aws-credenti
 
 - repository **secret** `AWS_CI_PLAN_ROLE_ARN`: the read-only role the workflow assumes (a secret, so GitHub masks the account ID in it; no account ID lives in the repo)
 - repository **secret** `TF_VAR_endpoint_public_access_cidrs`: the value for `envs/dev` (GitHub masks it in logs); the other roots do not use it. The value is read as a Terraform `list(string)`, so it must be a list literal with brackets and quotes, for example `["203.0.113.10/32"]`. A bare `203.0.113.10/32` fails the `envs/dev` plan with `Invalid number literal` and `No value for required variable`.
+- repository **secret** `TF_VAR_COST_ALERT_EMAILS`: the recipients of the project cost alert in `envs/dev` (`budget.tf`). Same format rule as the CIDR secret: a Terraform list literal, for example `["you@example.com"]`. Until it exists the `envs/dev` plan job fails with `No value for required variable`; the other roots do not use it. The variable is `sensitive`, so the plan comment shows the addresses as `(sensitive value)`.
 
 Until the role secret exists, or on a pull request from a fork (no OIDC token), each job prints a `::notice` and succeeds without planning.
 
