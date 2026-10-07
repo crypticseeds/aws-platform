@@ -31,7 +31,7 @@ In another terminal:
 curl -s localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job | test("gateway|promscope")) | {job: .labels.job, namespace: .labels.namespace, health, lastError}'
 ```
 
-Expect one target for the gateway (namespace `gateway`) and one per Promscope replica (namespace `promscope`), all `"health": "up"` with an empty `lastError`.
+Expect one target per gateway pod (2, namespace `gateway`) and one per Promscope pod (2, namespace `promscope`), all `"health": "up"` with an empty `lastError`. The ServiceMonitor makes one target per ready pod, and both charts run 2 replicas.
 
 PromQL: every target reports 1.
 
@@ -39,10 +39,10 @@ PromQL: every target reports 1.
 curl -sG localhost:9090/api/v1/query --data-urlencode 'query=up{job=~".*gateway.*|.*promscope.*"}' | jq '.data.result[] | {job: .metric.job, value: .value[1]}'
 ```
 
-Pass/fail in one command (exit 0 only if there are at least two series and all are 1):
+Pass/fail in one command (exit 0 only if both the gateway and Promscope jobs are present and every series is 1):
 
 ```
-curl -sG localhost:9090/api/v1/query --data-urlencode 'query=up{job=~".*gateway.*|.*promscope.*"}' | jq -e '(.data.result | length) >= 2 and all(.data.result[]; .value[1] == "1")'
+curl -sG localhost:9090/api/v1/query --data-urlencode 'query=up{job=~".*gateway.*|.*promscope.*"}' | jq -e '([.data.result[].metric.job] | unique | map(select(test("gateway|promscope"))) | length) == 2 and all(.data.result[]; .value[1] == "1")'
 ```
 
 If a target is missing, check in this order:
