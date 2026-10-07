@@ -10,7 +10,11 @@ spec:
     matchLabels:
       {{- include "gateway.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: metrics
+    # The gateway serves /metrics from its FastAPI app on the API port
+    # (app/main.py includes metrics_router; no separate listener starts on
+    # config.metrics.port, 9090). Scraping the "metrics" port would show the
+    # target as down.
+    - port: http
       path: /metrics
       interval: {{ .Values.serviceMonitor.interval }}
 {{- end }}
