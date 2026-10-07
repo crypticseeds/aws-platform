@@ -1,0 +1,25 @@
+# Grafana dashboards (ConfigMaps labelled grafana_dashboard: "1", picked up by
+# the kube-prometheus-stack Grafana sidecar). Kustomize from this repo, see
+# platform/grafana-dashboards/.
+#
+# Wave 0: the monitoring namespace comes from kube-prometheus-stack (wave -1).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana-dashboards
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: aws-platform
+  source:
+    repoURL: https://github.com/crypticseeds/aws-platform.git
+    targetRevision: main
+    path: platform/grafana-dashboards
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

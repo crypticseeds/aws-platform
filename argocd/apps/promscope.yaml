@@ -1,0 +1,49 @@
+# Promscope MCP server (chart charts/promscope from this repo). Queries
+# kube-prometheus-stack in monitoring.
+#
+# Exposure: ClusterIP only, no Ingress. Promscope has no authentication by
+# design, so /mcp is reached with `kubectl port-forward` (deploy runbook).
+#
+# Before the first sync the owner creates the Secret dockerhub-pull in the
+# promscope namespace from Doppler (docs/runbooks/deploy.md, section 6). The
+# Docker Hub repository is public: the Secret only lifts anonymous pull rate
+# limits. If it is missing, the kubelet logs a warning event and pulls
+# anonymously, so the pods still start.
+#
+# Wave 0: after the monitoring CRDs (-1), which the ServiceMonitor needs.
+#
+# To release a new image, change image.tag below in a PR (runbook, section 6).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: promscope
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: aws-platform
+  source:
+    repoURL: https://github.com/crypticseeds/aws-platform.git
+    targetRevision: main
+    path: charts/promscope
+    helm:
+      releaseName: promscope
+      valueFiles:
+        - values-dev.yaml
+      valuesObject:
+        image:
+          repository: crypticseeds/promscope
+          # Git SHA of the image built by the Image workflow. Quoted on
+          # purpose; never "latest".
+          tag: "26707945e5109f76cbe71a2934b9a521644a2a1e"
+        serviceMonitor:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: promscope
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
