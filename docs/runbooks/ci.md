@@ -36,7 +36,8 @@ Because the repo is public, its Actions logs and PR comments are public too. The
 ## Exceptions
 
 - trivy: inline `trivy:ignore:<rule>` comment with a reason, next to the code.
-- checkov: inline `checkov:skip=<ID>:<reason>` comment, next to the code.
+- checkov: inline `checkov:skip=<ID>:<reason>` comment, next to the code. Only for checks that cannot see the truth (for example a security group attached by the Load Balancer Controller, outside Terraform).
+- Do not skip a check because a sensitive variable has no value in CI. The checkov step feeds it a documentation value (`203.0.113.10/32`) with `--var-file`, so the rule is still evaluated; add new sensitive inputs there the same way. The real value is guarded by Terraform variable validation.
 
 ## Run the same checks locally
 

@@ -16,7 +16,6 @@ locals {
 }
 
 resource "aws_security_group" "gateway_alb" {
-  # checkov:skip=CKV_AWS_260:Port 80 is open only to var.endpoint_public_access_cidrs, which module.cluster validates as single IPv4 /32s; checkov cannot resolve the sensitive variable.
   # checkov:skip=CKV2_AWS_5:Attached outside Terraform by the AWS Load Balancer Controller (Ingress annotation alb.ingress.kubernetes.io/security-groups).
   name        = local.gateway_alb_name
   description = "Gateway ALB: HTTP from the owner's IP only."

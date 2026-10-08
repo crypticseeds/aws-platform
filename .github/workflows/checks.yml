@@ -134,9 +134,15 @@ jobs:
         # Severity filtering (--check HIGH,CRITICAL) needs a Prisma Cloud API key;
         # without one it selects zero checks, so every check runs here.
         # Deliberate exceptions: inline `checkov:skip=<ID>:<reason>` comments.
+        # Sensitive inputs have no value in CI, and checkov fails a rule it
+        # cannot resolve. The var file gives it a documentation /32 (RFC 5737)
+        # so the SG rules are really evaluated: a hard-coded 0.0.0.0/0 still
+        # fails. The real owner IP is guarded by variable validation instead.
         run: |
+          printf 'endpoint_public_access_cidrs = ["203.0.113.10/32"]\n' > "$RUNNER_TEMP/checkov.tfvars"
           checkov -d bootstrap -d envs/dev -d modules -d rendered \
             --framework terraform kubernetes \
+            --var-file "$RUNNER_TEMP/checkov.tfvars" \
             --soft-fail --compact \
             -o cli -o sarif --output-file-path console,checkov.sarif
       - name: Upload checkov SARIF to code scanning
