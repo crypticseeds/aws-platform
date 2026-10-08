@@ -14,6 +14,11 @@ ingress:
     # gateway's own request timeout is 35s, so 60s (the ALB default) would be
     # enough today; 120s leaves room for slower real providers later.
     alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=120
+    # Only the owner's IP may reach the ALB. The group is created by
+    # envs/dev/gateway-alb.tf and found by its Name tag; the allowed CIDR stays
+    # in the git-ignored tfvars, not in this public repo (DEV-164).
+    alb.ingress.kubernetes.io/security-groups: aws-platform-dev-gateway-alb
+    alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
 
 serviceMonitor:
   enabled: true
