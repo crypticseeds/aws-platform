@@ -109,6 +109,8 @@ Argo CD is installed once per cluster with Helm, then manages everything else fr
 
 6. Bootstrap the app-of-apps. The `bootstrap` project limits the root app to creating Applications and AppProjects in `argocd`:
 
+   **First do [section 5](#5-platform-add-ons-owner) step 1 (Grafana Secret) and [section 6](#6-gateway-and-promscope-owner) step 1 (namespaces and pull Secrets).** The root app and its children sync automatically, so kube-prometheus-stack and the apps start as soon as step 6 runs. Without the Grafana Secret, Grafana waits in `CreateContainerConfigError`.
+
    ```
    kubectl apply -f argocd/bootstrap-project.yaml -f argocd/root.yaml
    kubectl -n argocd get applications
