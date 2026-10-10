@@ -26,20 +26,25 @@ If your home IP changes later, `kubectl` times out. Update `terraform.tfvars` an
 
 ## 2. Plan and apply (owner)
 
-Two things first. `terraform.tfvars` needs `cost_alert_emails = ["you@example.com"]` (see `terraform.tfvars.example`): the project budget in `budget.tf` emails you when spend on resources tagged `Project=aws-platform` passes $30 in the month, and again at $50. And in the Billing console (Cost allocation tags) activate the `Project` tag, once. It is an account setting, so it stays on after a destroy. Until it is active the budget sees no spend and never alerts; tag data appears within about a day of activating it.
+Two things first. Terraform needs `cost_alert_emails`: the project budget in `budget.tf` emails you when spend on resources tagged `Project=aws-platform` passes $30 in the month, and again at $50. Keep it in Doppler as **`COST_ALERT_EMAILS`**, value a Terraform list with straight quotes, e.g. `["you@example.com"]`. `doppler run --name-transformer tf-var` turns it into `TF_VAR_cost_alert_emails`, the exact name Terraform looks for (environment variable names are case-sensitive on macOS). Don't name the Doppler secret `TF_VAR_...`: the transformer adds its own prefix and Terraform prompts for the value. The transformer passes every secret in the Doppler config, and it can't be combined with `--only-secrets` (Doppler rejects it), so no Doppler secret may share a name with an `envs/dev` variable (`REGION`, `NAME`, `VPC_CIDR_BLOCK`, `AZ_COUNT`, `KUBERNETES_VERSION`, `NODE_INSTANCE_TYPE`, `ENDPOINT_PUBLIC_ACCESS_CIDRS`). Alternatively put `cost_alert_emails = [...]` in `terraform.tfvars` and drop the `doppler run` prefix.
+
+And in the Billing console (Cost allocation tags) activate the `Project` tag, once. It is an account setting, so it stays on after a destroy. Until it is active the budget sees no spend and never alerts; tag data appears within about a day of activating it.
 
 ```
 aws sso login --profile platform-admin        # shortcut: aws-admin-login
 export AWS_PROFILE=platform-admin
 aws sts get-caller-identity                   # shortcut: aws-admin-identity
 
-terraform init
-terraform plan -out=dev.tfplan
-terraform apply dev.tfplan
-terraform plan
+git pull                                      # plan the reviewed code on main, not an old checkout
+doppler run --name-transformer tf-var -- terraform init
+doppler run --name-transformer tf-var -- terraform plan -out=dev.tfplan
+terraform apply dev.tfplan                    # the saved plan already holds the values
+doppler run --name-transformer tf-var -- terraform plan
 ```
 
-Check the first plan before applying: only additions, **0 to change, 0 to destroy**, exactly one `aws_nat_gateway` and one `aws_budgets_budget`. The apply takes about 15-20 minutes, most of it the EKS control plane. The last `terraform plan` must print `No changes.`
+Check the first plan before applying: **`Plan: 69 to add, 0 to change, 0 to destroy.`** (2026-10-10, main at `2d66c6c`), including one `aws_nat_gateway`, one `aws_budgets_budget` and `aws_security_group.gateway_alb`. A different count means different code: a Mac checkout that had not been pulled planned 67 (no budget, no ALB security group). Compare with the CI plan comment on the last `envs/dev` PR. If a prompt asks for `var.cost_alert_emails`, press Ctrl+C: a plan waiting at a prompt holds the state lock. The apply takes about 15-20 minutes, most of it the EKS control plane. The last `terraform plan` must print `No changes.`
+
+If a plan fails with `Error acquiring the state lock` and the lock's `Who` is your own machine, an earlier run is still waiting (Ctrl+C it) or was killed. Only when no Terraform runs anywhere: `terraform force-unlock <ID from the error>`.
 
 Delete the saved plan afterwards. It is git-ignored, but plan files can contain sensitive values:
 
@@ -72,13 +77,15 @@ Argo CD is installed once per cluster with Helm, then manages everything else fr
 
    ```
    kubectl create namespace argocd
-   doppler run --only-secrets SLACK_ARGOCD_BOT_TOKEN -- sh -c 'printf %s "$SLACK_ARGOCD_BOT_TOKEN" | kubectl -n argocd create secret generic argocd-notifications-secret --from-file=slack-token=/dev/stdin'
+   doppler run --only-secrets SLACK_ARGOCD_BOT_TOKEN -- sh -c \
+   'printf %s "$SLACK_ARGOCD_BOT_TOKEN" | kubectl -n argocd create secret generic argocd-notifications-secret --from-file=slack-token=/dev/stdin'
    ```
 
 2. Install the pinned chart:
 
    ```
    helm repo add argo https://argoproj.github.io/argo-helm
+   helm repo update argo                       # an old local index fails with "no chart version found"
    helm install argocd argo/argo-cd --version 10.9.6 -n argocd -f argocd/values.yaml
    kubectl -n argocd get pods
    ```
@@ -100,6 +107,8 @@ Argo CD is installed once per cluster with Helm, then manages everything else fr
    ```
 
    Open https://localhost:8080 (accept the self-signed certificate) and log in as `admin`.
+
+   Why localhost: Argo CD has no public address on purpose (ClusterIP service, no load balancer or Ingress, step 3). `kubectl port-forward` opens a tunnel from port 8080 on your machine through the EKS API endpoint, which only your IP can reach and which checks your AWS identity, to the `argocd-server` pod. Stop it with Ctrl+C when you're done.
 
 5. Rotate the password: in the UI, User Info > Update Password, and keep the new one in Doppler. Then delete the initial secret, which Argo CD no longer needs:
 
@@ -278,8 +287,8 @@ Promscope is reached only with a port-forward: `kubectl -n promscope port-forwar
 The environment costs roughly $6-7 a day while it runs, so destroy it when you finish. Review the destroy plan first:
 
 ```
-terraform plan -destroy
-terraform destroy
+doppler run --name-transformer tf-var -- terraform plan -destroy
+doppler run --name-transformer tf-var -- terraform destroy
 ```
 
 Then log out the admin (see [bootstrap.md](bootstrap.md#step-2-move-bootstrap-state-into-the-bucket-owner) for the standard and shortcut commands).

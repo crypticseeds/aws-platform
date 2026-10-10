@@ -77,8 +77,8 @@ Review the plan first, as in [deploy.md](deploy.md#6-end-of-session):
 
 ```
 cd envs/dev
-terraform plan -destroy
-terraform destroy
+doppler run --name-transformer tf-var -- terraform plan -destroy
+doppler run --name-transformer tf-var -- terraform destroy
 ```
 
 Expect only deletions, all in `envs/dev`: the VPC, one NAT gateway, the EKS cluster and node group, and the add-on IAM role. It takes about 10-15 minutes. If the VPC deletion hangs on `DependencyViolation`, something from step 1 or 2 is left: run the leak check below and look at the network interfaces.
