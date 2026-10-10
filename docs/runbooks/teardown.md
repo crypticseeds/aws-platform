@@ -17,7 +17,7 @@ Two tools created things in AWS. Terraform created the VPC, NAT gateway, EKS clu
 
 - `aws-platform-dev-gateway-alb` (Terraform's security group) is still attached to the ALB, so AWS refuses to delete it (`DependencyViolation`).
 - The ALB has network interfaces and public addresses in the public subnets, so the subnets, the internet gateway and the VPC can't be deleted either.
-- Terraform retries for a while, then exits with errors. The cluster, nodes and IAM are gone, but the ALB keeps running and billing (roughly $0.60 a day plus traffic), along with the VPC pieces it pins.
+- Terraform retries for a while, then exits with errors. The cluster, nodes and IAM are gone, but the ALB keeps running and billing (in eu-west-2 $0.02646 an hour, about $0.64 a day, plus traffic and its public IPv4 addresses), along with the VPC pieces it pins.
 
 The fix afterwards is manual: delete the ALB, its target group and the controller's `k8s-*` security groups in the console or CLI, then run `terraform destroy` again. The steps below avoid all of that.
 
