@@ -5,7 +5,8 @@
 # role annotation.
 #
 # Wave -2: its webhooks must be serving before anything creates Ingresses or
-# Services (kube-prometheus-stack is wave -1, the apps wave 0).
+# Services (kube-prometheus-stack is wave -1, the apps wave 0). cert-manager
+# (wave -3) issues its webhook certificate (DEV-166).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -53,6 +54,12 @@ spec:
         # `type: LoadBalancer` Service would silently get a paid NLB.
         enableServiceMutatorWebhook: false
 
+        # Webhook certificate from cert-manager (Issuer and Certificate in
+        # kube-system, caBundle injected by cainjector). Without it the chart
+        # generates a new CA on every render, and an Argo CD self-heal left
+        # the caBundle and the served certificate from different CAs (DEV-166).
+        enableCertManager: true
+
         replicaCount: 2
         podDisruptionBudget:
           maxUnavailable: 1
@@ -62,17 +69,10 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-system
-  # The chart generates a new self-signed webhook certificate on every render.
-  # Argo CD cannot use Helm's lookup to keep the old one, so the live
-  # certificate and caBundle are ignored after the first sync and kept as
-  # they are (RespectIgnoreDifferences) instead of being rotated on every
-  # refresh.
+  # cert-manager's cainjector writes caBundle into the webhook configurations
+  # after Argo CD applies them; the chart leaves it empty. Ignore it in the
+  # diff and keep the live value on sync.
   ignoreDifferences:
-    - group: ""
-      kind: Secret
-      name: aws-load-balancer-tls
-      jsonPointers:
-        - /data
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
       name: aws-load-balancer-webhook

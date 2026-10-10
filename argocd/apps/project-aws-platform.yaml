@@ -1,25 +1,28 @@
 # AppProject for the platform add-ons and the apps. Each workload gets its own
 # namespace; argocd itself is not a permitted destination.
 #
-# Kept minimal on purpose: this repo plus the two upstream chart repos of the
+# Kept minimal on purpose: this repo plus the three upstream chart repos of the
 # platform add-ons as sources. The cluster-scoped kinds are exactly those in
-# `helm template` of the pinned add-on charts (aws-load-balancer-controller
-# 3.5.0, kube-prometheus-stack 91.9.0) plus Namespace for CreateNamespace.
-# Re-check the list when either chart is upgraded.
+# `helm template` of the pinned add-on charts (cert-manager v1.21.2,
+# aws-load-balancer-controller 3.5.0, kube-prometheus-stack 91.9.0) plus
+# Namespace for CreateNamespace. cert-manager adds no new kinds. Re-check the
+# list when any chart is upgraded.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: aws-platform
   namespace: argocd
   annotations:
-    # Before the Applications that use it (add-ons -2/-1, apps 0).
-    argocd.argoproj.io/sync-wave: "-3"
+    # Before the Applications that use it (cert-manager -3, add-ons -2/-1,
+    # apps 0).
+    argocd.argoproj.io/sync-wave: "-4"
 spec:
   description: Platform add-ons and applications for aws-platform.
   sourceRepos:
     - https://github.com/crypticseeds/aws-platform.git
     - https://aws.github.io/eks-charts
     - https://prometheus-community.github.io/helm-charts
+    - https://charts.jetstack.io
   destinations:
     - server: https://kubernetes.default.svc
       namespace: gateway
@@ -29,10 +32,12 @@ spec:
       namespace: monitoring
     - server: https://kubernetes.default.svc
       namespace: kube-system
+    - server: https://kubernetes.default.svc
+      namespace: cert-manager
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
-    # Both add-ons: their CRDs, cluster RBAC and admission webhooks.
+    # The add-ons: their CRDs, cluster RBAC and admission webhooks.
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
     - group: rbac.authorization.k8s.io

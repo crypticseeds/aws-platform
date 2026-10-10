@@ -66,10 +66,10 @@ The ALB is gone, so the controller is no longer needed.
 ```
 kubectl -n argocd delete applications --all
 helm uninstall argocd -n argocd
-kubectl delete namespace monitoring argocd
+kubectl delete namespace monitoring cert-manager argocd
 ```
 
-Deleting the Applications leaves the add-on resources in place (no finalizer). Deleting the `monitoring` namespace removes Prometheus, Alertmanager and Grafana (all on emptyDir, so no volumes to leak). The Load Balancer Controller in `kube-system` is not removed on its own: it has no AWS resources left, and the cluster destroy in step 4 removes it with the nodes. Its IAM role and Pod Identity association are in `envs/dev`, so Terraform removes those too.
+Deleting the Applications leaves the add-on resources in place (no finalizer). Deleting the `monitoring` namespace removes Prometheus, Alertmanager and Grafana (all on emptyDir, so no volumes to leak). cert-manager creates nothing in AWS. The Load Balancer Controller in `kube-system` is not removed on its own: it has no AWS resources left, and the cluster destroy in step 4 removes it with the nodes. Its IAM role and Pod Identity association are in `envs/dev`, so Terraform removes those too.
 
 ## 4. Terraform destroy (owner)
 
