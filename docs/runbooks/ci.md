@@ -19,19 +19,19 @@ Every chart needs `values-dev.yaml` and `ci/test-values.yaml`; the chart loop fa
 
 ## Terraform plan on pull requests (DEV-135)
 
-`.github/workflows/terraform-plan.yml` runs on pull requests that touch `**/*.tf`, `**/*.tfvars.example`, `**/.terraform.lock.hcl` or the workflow itself. For each root (`bootstrap`, `account`, `envs/dev`) it runs `terraform init`, `validate` and `plan` (with the normal S3 lock: the role may write and delete only `*.tflock` objects, ADR 0007), then posts the plan as one PR comment per root. A hidden marker (`<!-- terraform-plan:<root> -->`) lets later pushes edit the same comment instead of adding new ones; output over 60000 bytes is truncated with a link to the run. Formatting, tflint, trivy and checkov stay in `checks.yml`.
+`.github/workflows/terraform-plan.yml` runs on pull requests that touch `**/*.tf`, `**/*.tfvars.example`, `**/.terraform.lock.hcl` or the workflow itself. For each root (`bootstrap`, `account`, `envs/dev`) it runs `terraform init`, `validate` and `plan` (with the normal S3 lock: the role may write and delete only `*.tflock` objects, ADR 0007), then posts a plan summary as one PR comment per root: the counts line (`Plan: X to add, Y to change, Z to destroy` or `No changes.`) and one `action address` line per changed resource (`create`, `update`, `replace`, `delete`, `forget`, `import`). It never shows attribute values: the full plan stays in a file on the runner and is deleted. A failed plan shows its `Error:` blocks instead. Review the full plan locally (`terraform plan`) before applying. A hidden marker (`<!-- terraform-plan:<root> -->`) lets later pushes edit the same comment instead of adding new ones. Formatting, tflint, trivy and checkov stay in `checks.yml`.
 
 It authenticates to AWS through GitHub OIDC (`aws-actions/configure-aws-credentials`, region `eu-west-2`) and needs, set by the owner:
 
 - repository **secret** `AWS_CI_PLAN_ROLE_ARN`: the read-only role the workflow assumes (a secret, so GitHub masks the account ID in it; no account ID lives in the repo)
 - repository **secret** `TF_VAR_endpoint_public_access_cidrs`: the value for `envs/dev` (GitHub masks it in logs); the other roots do not use it. The value is read as a Terraform `list(string)`, so it must be a list literal with brackets and quotes, for example `["203.0.113.10/32"]`. A bare `203.0.113.10/32` fails the `envs/dev` plan with `Invalid number literal` and `No value for required variable`.
-- repository **secret** `TF_VAR_COST_ALERT_EMAILS`: the recipients of the project cost alert in `envs/dev` (`budget.tf`). Same format rule as the CIDR secret: a Terraform list literal, for example `["you@example.com"]`. Until it exists the `envs/dev` plan job fails with `No value for required variable`; the other roots do not use it. The variable is `sensitive`, so the plan comment shows the addresses as `(sensitive value)`.
+- repository **secret** `TF_VAR_COST_ALERT_EMAILS`: the recipients of the project cost alert in `envs/dev` (`budget.tf`). Same format rule as the CIDR secret: a Terraform list literal, for example `["you@example.com"]`. Until it exists the `envs/dev` plan job fails with `No value for required variable`; the other roots do not use it. The variable is `sensitive`, so `terraform plan` shows the addresses as `(sensitive value)`.
 
 Until the role secret exists, or on a pull request from a fork (no OIDC token), each job prints a `::notice` and succeeds without planning.
 
 The workflow never applies. Changes reach AWS only through an owner-run `terraform apply` after review, so a pull request, a fork or a compromised action can never change infrastructure: the role is read-only apart from the state lock file.
 
-Because the repo is public, its Actions logs and PR comments are public too. The workflow masks the AWS account ID in logs (`mask-aws-account-id`) and replaces it with `<account-id>` in plan comments. `envs/dev`'s `endpoint_public_access_cidrs` is marked `sensitive`, so the owner's IP shows as `(sensitive value)` in plans.
+Because the repo is public, its Actions logs and PR comments are public too. That is why the workflow publishes only the plan summary, never the full plan, in both (DEV-165; plan comments before it showed the full plan and stay as they are). It also masks the AWS account ID in logs (`mask-aws-account-id`) and replaces it with `<account-id>` in comments. `envs/dev`'s `endpoint_public_access_cidrs` is marked `sensitive`, so the owner's IP shows as `(sensitive value)` in plans.
 
 ## Exceptions
 
