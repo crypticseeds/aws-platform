@@ -1,0 +1,53 @@
+# cert-manager: issues the AWS Load Balancer Controller's webhook serving
+# certificate (DEV-166). Without it the controller chart generates a new
+# self-signed CA on every render; under Argo CD a self-heal re-render left the
+# webhook caBundle and the served certificate from different CAs, and every
+# Ingress was rejected with "x509: certificate signed by unknown authority".
+#
+# No AWS resources and no ClusterIssuer: the controller chart ships its own
+# namespaced Issuer and Certificates in kube-system.
+#
+# Wave -3: its CRDs and webhook must be serving before the controller (-2)
+# creates Issuer and Certificate objects.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  project: aws-platform
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.21.2
+    helm:
+      releaseName: cert-manager
+      valuesObject:
+        crds:
+          enabled: true
+        # A Helm post-install hook Job that only checks the API is up; Argo
+        # CD's own health checks on the Deployments do that already.
+        startupapicheck:
+          enabled: false
+        resources:
+          requests: {cpu: 10m, memory: 64Mi}
+          limits: {memory: 256Mi}
+        webhook:
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+        cainjector:
+          resources:
+            requests: {cpu: 10m, memory: 64Mi}
+            limits: {memory: 256Mi}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

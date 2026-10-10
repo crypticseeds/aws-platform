@@ -130,7 +130,7 @@ Argo CD is installed once per cluster with Helm, then manages everything else fr
 
 ## 5. Platform add-ons (owner)
 
-The root app creates two add-on Applications from `argocd/apps/`: the AWS Load Balancer Controller (`kube-system`, sync wave -2) and kube-prometheus-stack (`monitoring`, wave -1). Apps come after them (wave 0).
+The root app creates three add-on Applications from `argocd/apps/`: cert-manager (`cert-manager`, sync wave -3), which issues the controller's webhook certificate (DEV-166), the AWS Load Balancer Controller (`kube-system`, wave -2) and kube-prometheus-stack (`monitoring`, wave -1). Apps come after them (wave 0).
 
 The controller's IAM role and its Pod Identity association are part of `envs/dev`, so step 2's apply already created them. Nothing to do for the controller.
 
@@ -151,13 +151,17 @@ The controller's IAM role and its Pod Identity association are part of `envs/dev
 
    Expect the keys `admin-user` and `admin-password`.
 
-2. Watch both add-ons sync:
+2. Watch the add-ons sync:
 
    ```
    kubectl -n argocd get applications
    ```
 
-   Expect `aws-load-balancer-controller` and `kube-prometheus-stack` both `Synced` and `Healthy`.
+   Expect `cert-manager`, `aws-load-balancer-controller` and `kube-prometheus-stack` all `Synced` and `Healthy`. The controller's webhook certificate must be issued; `True` means Ready:
+
+   ```
+   kubectl -n kube-system get certificate aws-load-balancer-serving-cert -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}{"\n"}'
+   ```
 
 3. The controller must have its AWS permissions. Both pods `Running`, and no AccessDenied in its first 5 minutes of logs:
 

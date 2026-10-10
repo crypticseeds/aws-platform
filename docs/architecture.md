@@ -113,7 +113,7 @@ All Ingresses share the group name `aws-platform-dev`, so any later app joins th
 
 1. The owner applies `envs/dev`, then installs Argo CD once with Helm and applies `argocd/bootstrap-project.yaml` and `argocd/root.yaml` ([deploy runbook](runbooks/deploy.md), [ADR 0011](decisions/0011-argocd-install-by-helm.md)).
 2. `root` is an app-of-apps watching `argocd/apps/` on `main` of this repo, with automated sync, prune and selfHeal. A file added there is created, a file removed is pruned, a manual change in the cluster is reverted.
-3. Sync waves order the rollout: the `aws-platform` AppProject (-3), the Load Balancer Controller (-2), kube-prometheus-stack (-1), then the apps (0).
+3. Sync waves order the rollout: the `aws-platform` AppProject (-4), cert-manager (-3, issues the Load Balancer Controller's webhook certificate), the Load Balancer Controller (-2), kube-prometheus-stack (-1), then the apps (0).
 4. Terraform stays AWS-only. It creates the Load Balancer Controller's IAM role and Pod Identity association, and nothing inside the cluster ([ADR 0009](decisions/0009-eks-security-choices.md)).
 5. Everything is lost on `terraform destroy` and rebuilt from git. Apps and the controller must be removed before destroy because they create ALBs and security groups outside Terraform (ADR 0011; the teardown order is DEV-145).
 
