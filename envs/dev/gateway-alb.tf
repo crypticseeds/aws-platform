@@ -17,8 +17,9 @@ locals {
 
 resource "aws_security_group" "gateway_alb" {
   # checkov:skip=CKV2_AWS_5:Attached outside Terraform by the AWS Load Balancer Controller (Ingress annotation alb.ingress.kubernetes.io/security-groups).
-  name        = local.gateway_alb_name
-  description = "Gateway ALB: HTTP from the owner's IP only."
+  name = local.gateway_alb_name
+  # Only a-zA-Z0-9, space and ._-:/()#,@[]+=&;{}!$* are allowed; AWS rejects anything else at apply time.
+  description = "Gateway ALB: HTTP from the owner IP only."
   vpc_id      = module.network.vpc_id
 
   ingress {
