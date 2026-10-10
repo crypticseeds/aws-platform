@@ -13,7 +13,7 @@ Two choices had to be made: where Argo CD runs, and what installs it.
 
 - **Argo CD runs inside the EKS cluster**, in the `argocd` namespace. Running it on the owner's Pi 5 k3s as a hub (DEV-155) is a later step.
 - **The owner installs it with a documented one-time `helm install`** of the official `argo-cd` chart, pinned to **10.9.6** (Argo CD v3.5.3), using `argocd/values.yaml` ([deploy runbook, step 4](../runbooks/deploy.md#4-install-argo-cd-and-the-root-app-owner)).
-- The owner then applies `argocd/bootstrap-project.yaml` and `argocd/root.yaml`. From then on, everything comes from `argocd/apps/` in git: automated sync, prune and selfHeal.
+- The owner then applies `argocd/bootstrap-project.yaml` and `argocd/root.yaml`. From then on, the platform comes from `argocd/apps/` in git: automated sync, prune and selfHeal. The workloads are applied by hand from `argocd/workloads/` (amendment below).
 - The server is `ClusterIP` only and reached by port-forward. Dex (SSO) is off. Slack notifications go to `#alerts` on failed syncs and Degraded health, with the token in a Secret created from Doppler.
 
 ## Consequences
@@ -29,3 +29,16 @@ Two choices had to be made: where Argo CD runs, and what installs it.
 - **Terraform `helm_release` in `envs/dev`.** One apply builds everything, but it needs the Helm and Kubernetes providers configured against a cluster created in the same root. On destroy, Terraform would remove Argo CD while ALBs it created still hold the VPC. Rejected.
 - **Argo CD on the Pi 5 k3s as a hub (DEV-155).** It survives EKS rebuilds and keeps controllers off the nodes, but it needs a private network path to the EKS API (Tailscale) and a machine identity first. Kept for later.
 - **Argo CD Autopilot or a bootstrap script.** More tooling for a single install command. Rejected.
+
+## Amendment: 2026-10-10, workloads applied by hand (DEV-167)
+
+**Decision.** `root` deploys only the platform: the `aws-platform` AppProject, cert-manager, the Load Balancer Controller, agent RBAC, kube-prometheus-stack and the Grafana dashboards, all in `argocd/apps/`. The two workload Applications, `sre-inference-gateway` and `promscope`, move to `argocd/workloads/`, which `root` does not read. The owner applies each one with `kubectl apply -f argocd/workloads/<file>` when wanted. Once applied, each syncs from git with automated sync and selfHeal, as before.
+
+**Why.** The owner wants to bring the apps up one or two at a time, to learn and check each step. `root` has prune and selfHeal, so anything under `argocd/apps/` is always deployed and cannot be left out or removed by hand: it would be put straight back.
+
+**Consequences.**
+
+- One extra `kubectl apply` per workload per rebuild ([deploy runbook, section 6](../runbooks/deploy.md#6-gateway-and-promscope-owner)).
+- The workloads no longer have sync waves: waves only order an app-of-apps' children. The platform is applied first and is Healthy before the owner applies a workload, so the order still holds.
+- Removing a workload is `kubectl -n argocd delete application <name>`. The Applications have no finalizer, so this removes only the Application; its Deployment, Service and Ingress keep running (and the gateway's ALB keeps billing) until the namespace is deleted.
+- Teardown is unchanged in practice: its auto-sync loop covers every Application in `argocd`, root's children or not, and deleting every Ingress removes the ALB ([teardown.md](../runbooks/teardown.md), step 1).

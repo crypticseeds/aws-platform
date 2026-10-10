@@ -5,8 +5,9 @@
 # role annotation.
 #
 # Wave -2: its webhooks must be serving before anything creates Ingresses or
-# Services (kube-prometheus-stack is wave -1, the apps wave 0). cert-manager
-# (wave -3) issues its webhook certificate (DEV-166).
+# Services (kube-prometheus-stack is wave -1; the workloads in
+# argocd/workloads/ are applied by hand later). cert-manager (wave -3) issues
+# its webhook certificate (DEV-166).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

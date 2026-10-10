@@ -42,7 +42,7 @@ flowchart LR
     client -->|HTTP| alb
     alb -->|target-type ip| gw
     lbc -.->|creates and manages| alb
-    argo -->|watches argocd/apps| gh
+    argo -->|watches main| gh
     argo -.->|syncs| lbc
     argo -.->|syncs| kps
     argo -.->|syncs| gw
@@ -76,15 +76,15 @@ flowchart LR
 | AWS Load Balancer Controller | `argocd/apps/aws-load-balancer-controller.yaml`, `envs/dev/aws-load-balancer-controller.tf` (IAM role and Pod Identity association) | built in code |
 | Argo CD | `argocd/values.yaml`, `argocd/root.yaml`, `argocd/bootstrap-project.yaml`, [ADR 0011](decisions/0011-argocd-install-by-helm.md), `docs/runbooks/deploy.md` step 4 | built in code, installed by the owner with Helm |
 | kube-prometheus-stack | `argocd/apps/kube-prometheus-stack.yaml` | built in code |
-| Gateway with mock providers | `charts/sre-inference-gateway/` (`values-dev.yaml` enables only `type: "mock"` providers) | built in code (`argocd/apps/sre-inference-gateway.yaml`, image pinned by SHA); runs once the owner syncs it |
-| Promscope | `charts/promscope/` (`templates/service.yaml` is ClusterIP) | built in code (`argocd/apps/promscope.yaml`, image pinned by SHA); runs once the owner syncs it |
+| Gateway with mock providers | `charts/sre-inference-gateway/` (`values-dev.yaml` enables only `type: "mock"` providers) | built in code (`argocd/workloads/sre-inference-gateway.yaml`, image pinned by SHA); runs once the owner applies it by hand |
+| Promscope | `charts/promscope/` (`templates/service.yaml` is ClusterIP) | built in code (`argocd/workloads/promscope.yaml`, image pinned by SHA); runs once the owner applies it by hand |
 | Docker Hub images | [ADR 0006](decisions/0006-docker-hub-not-ecr.md), `crypticseeds/sre-inference-gateway` and `crypticseeds/promscope` on Docker Hub (built and pushed by workflows in the app repos) | published 2026-10-05 and 2026-10-06 (promscope PR #1, gateway PR #30); namespace decided (DEV-125) |
 | CI OIDC plan role | `account/main.tf` (`aws_iam_role.ci_plan`, `aws_iam_openid_connect_provider.github`), `.github/workflows/terraform-plan.yml`, `docs/runbooks/account.md` | in code and in use: role (PR #9, DEV-133) and plan-only workflow (PR #17, DEV-135, merged 2026-10-06; run 37392939869 passed all three plan jobs). `.github/workflows/checks.yml` runs static checks with no AWS access |
 | GitHub repo | `argocd/root.yaml` (`repoURL`) | exists |
 | Owner (PlatformAdmin) | `modules/cluster/main.tf` (access entry for the `PlatformAdmin` SSO role), [ADR 0002](decisions/0002-identity-center-and-read-only-agent.md) | permission sets live in Identity Center, outside this repo |
 | Agent (AgentReadOnly) | `policies/agent-readonly-inline.json`, [ADR 0002](decisions/0002-identity-center-and-read-only-agent.md) | AWS side in place. Kubernetes RBAC for the agent is in code (`platform/agent-rbac/`, `argocd/apps/agent-rbac.yaml`, access entry in `modules/cluster/main.tf`; PR #18, DEV-136, merged 2026-10-06), not yet verified on a running cluster |
 
-Dotted arrows are runtime actions (Argo CD syncing, the controller creating the ALB). The `syncs` arrows to the gateway and Promscope are in code (`argocd/apps/`); nothing runs until the owner applies and syncs.
+Dotted arrows are runtime actions (Argo CD syncing, the controller creating the ALB). The `syncs` arrows to the gateway and Promscope are in code (`argocd/workloads/`); they are not part of the root app, and nothing runs until the owner applies each one by hand (DEV-167).
 
 ## Trust boundaries
 
@@ -112,10 +112,11 @@ All Ingresses share the group name `aws-platform-dev`, so any later app joins th
 ## GitOps flow
 
 1. The owner applies `envs/dev`, then installs Argo CD once with Helm and applies `argocd/bootstrap-project.yaml` and `argocd/root.yaml` ([deploy runbook](runbooks/deploy.md), [ADR 0011](decisions/0011-argocd-install-by-helm.md)).
-2. `root` is an app-of-apps watching `argocd/apps/` on `main` of this repo, with automated sync, prune and selfHeal. A file added there is created, a file removed is pruned, a manual change in the cluster is reverted.
-3. Sync waves order the rollout: the `aws-platform` AppProject (-4), cert-manager (-3, issues the Load Balancer Controller's webhook certificate), the Load Balancer Controller (-2), kube-prometheus-stack (-1), then the apps (0).
-4. Terraform stays AWS-only. It creates the Load Balancer Controller's IAM role and Pod Identity association, and nothing inside the cluster ([ADR 0009](decisions/0009-eks-security-choices.md)).
-5. Everything is lost on `terraform destroy` and rebuilt from git. Apps and the controller must be removed before destroy because they create ALBs and security groups outside Terraform (ADR 0011; the teardown order is DEV-145).
+2. `root` is an app-of-apps watching `argocd/apps/` on `main` of this repo, with automated sync, prune and selfHeal. It holds only the platform. A file added there is created, a file removed is pruned, a manual change in the cluster is reverted.
+3. Sync waves order the platform rollout: the `aws-platform` AppProject (-4), cert-manager (-3, issues the Load Balancer Controller's webhook certificate), the Load Balancer Controller and agent RBAC (-2), kube-prometheus-stack (-1), then the Grafana dashboards (0).
+4. The workloads (`argocd/workloads/sre-inference-gateway.yaml`, `argocd/workloads/promscope.yaml`) are not read by `root`. The owner applies each with `kubectl apply -f` when wanted, one at a time; from then on it syncs from `main` like the rest ([ADR 0011](decisions/0011-argocd-install-by-helm.md), amendment, DEV-167).
+5. Terraform stays AWS-only. It creates the Load Balancer Controller's IAM role and Pod Identity association, and nothing inside the cluster ([ADR 0009](decisions/0009-eks-security-choices.md)).
+6. Everything is lost on `terraform destroy` and rebuilt from git. Apps and the controller must be removed before destroy because they create ALBs and security groups outside Terraform (ADR 0011; the teardown order is DEV-145).
 
 ## What is deliberately not exposed
 

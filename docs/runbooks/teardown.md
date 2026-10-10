@@ -11,7 +11,7 @@ export AWS_PROFILE=platform-admin
 
 ## 1. Delete the Ingresses and stop Argo CD recreating them (owner)
 
-Two things would undo a plain `kubectl delete ingress`: the `root` app prunes and self-heals, and every child app self-heals (all have `selfHeal: true`), so Argo CD would put the Ingresses straight back. The order that avoids it:
+Two things would undo a plain `kubectl delete ingress`: the `root` app prunes and self-heals, and every child app self-heals (all have `selfHeal: true`), so Argo CD would put the Ingresses straight back. The workloads (`sre-inference-gateway`, `promscope`) are not children of `root`: you applied them by hand from `argocd/workloads/` (DEV-167), so deleting `root` does not touch them, and they self-heal too. The order that avoids it:
 
 1. **Delete the `root` Application first.** While it exists it reverts any change to the child Applications, including step 2 below. Deleting it must not delete the children, so check it has no deletion finalizer (none today, see `argocd/root.yaml`). If the first command prints anything, stop: with `resources-finalizer.argocd.argoproj.io` the delete cascades to every child and removes the Load Balancer Controller before the ALB is gone.
 
@@ -20,15 +20,17 @@ Two things would undo a plain `kubectl delete ingress`: the `root` app prunes an
    kubectl -n argocd delete application root
    ```
 
-   Expect no output from the first command. Without a finalizer the child Applications and everything they deployed stay in place. Nothing is pruned: prune only runs during a sync of a live app.
+   Expect no output from the first command. Without a finalizer the child Applications and everything they deployed stay in place. Nothing is pruned: prune only runs during a sync of a live app. The hand-applied workload Applications are unaffected either way.
 
-2. **Turn off auto-sync on every remaining Application**, so nothing is recreated or re-synced:
+2. **Turn off auto-sync on every remaining Application**, so nothing is recreated or re-synced. The loop lists every Application in the `argocd` namespace, whoever created it, so it covers the platform children of `root` and the hand-applied workloads alike; nothing extra is needed for them:
 
    ```
    for app in $(kubectl -n argocd get applications -o name); do
      kubectl -n argocd patch "$app" --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'
    done
    ```
+
+   `kubectl -n argocd get applications` should now list each one with no automated sync; check that the gateway and Promscope are there if you applied them.
 
 3. **Delete every Ingress.** The Load Balancer Controller is still running, so it removes the ALB, listeners, target groups and its security groups. Also make sure no Service creates a load balancer of its own (the controller's Service webhook is off, so a `type: LoadBalancer` Service would create a classic load balancer outside the controller):
 

@@ -55,12 +55,12 @@ Search for each old value, change it, and run the checks. The right-hand column 
 | Project name `aws-platform` (tags, cluster name, names) | `envs/*/providers.tf`, `envs/*/variables.tf` (`aws-platform-dev`), `bootstrap/*`, chart `Chart.yaml`, `argocd/**`, ALB group name |
 | State key `aws-platform/dev/terraform.tfstate` | `envs/*/backend.tf` |
 | State bucket name | stays: one bucket per account, reused (`backend.tf` in each root) |
-| Repository URL | `argocd/root.yaml`, `argocd/apps/*.yaml`, `Repository` tag |
+| Repository URL | `argocd/root.yaml`, `argocd/apps/*.yaml`, `argocd/workloads/*.yaml`, `Repository` tag |
 | Tag value `Project=aws-platform` | provider `default_tags`, `budget.tf` filter, cost allocation tag |
 | OIDC subject (owner id, repo id) | `account/variables.tf` (see [account.md](account.md)) |
 | CI role name `aws-platform-ci-plan` | `account/main.tf` |
-| Namespaces `gateway`, `promscope`, `monitoring` | `argocd/apps/project-aws-platform.yaml`, app manifests |
-| Image repositories and pinned tags | `argocd/apps/*.yaml` (Docker Hub namespace) |
+| Namespaces `gateway`, `promscope`, `monitoring` | `argocd/apps/project-aws-platform.yaml`, `argocd/workloads/*.yaml` |
+| Image repositories and pinned tags | `argocd/workloads/*.yaml` (Docker Hub namespace) |
 | Doppler project and config | runbook commands in [deploy.md](deploy.md) |
 | Endpoint allowlist and budget recipients | repository secrets, never the repo |
 
