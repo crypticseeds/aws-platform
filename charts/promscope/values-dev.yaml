@@ -1,7 +1,7 @@
 # Dev environment.
 #
 # image.repository and image.tag are set by the Argo CD Application
-# (argocd/apps/promscope.yaml); rendering fails on purpose without them.
+# (argocd/workloads/promscope.yaml); rendering fails on purpose without them.
 #
 # Reach the MCP endpoint locally:
 #   kubectl -n <namespace> port-forward svc/promscope 8090:8090

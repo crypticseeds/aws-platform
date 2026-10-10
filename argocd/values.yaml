@@ -82,7 +82,7 @@ notifications:
 # Report a child Application's own health to the root app (removed from
 # Argo CD's defaults in 1.8). Without it the root app does not wait for one
 # sync wave's Applications to be Healthy before starting the next, so the
-# add-ons (waves -2/-1) would not be ready before the apps (wave 0).
+# add-ons (waves -3 to -1) would not be ready before the dashboards (wave 0).
 configs:
   cm:
     resource.customizations.health.argoproj.io_Application: |

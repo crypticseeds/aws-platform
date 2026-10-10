@@ -4,7 +4,27 @@ Creates the shared platform for dev (`envs/dev`): VPC, single NAT gateway, S3 ga
 
 Prerequisite: the state bucket exists ([bootstrap.md](bootstrap.md)).
 
+## How a session fits together
+
+Each step builds on the one before. Terraform creates the AWS side, Argo CD installs the shared platform from git, and you add the two workloads yourself, one at a time, when you want them.
+
+```mermaid
+flowchart TD
+    tf["1-2. Terraform (owner)<br/>VPC, NAT gateway, EKS, nodes,<br/>budget, ALB security group"]
+    kc["3. kubectl access<br/>cluster address + credentials,<br/>API open only to your IP"]
+    argo["4. Helm installs Argo CD"]
+    sec["Owner creates Secrets<br/>Slack token, Grafana admin"]
+    root["root app deploys the platform in waves<br/>-4 AppProject aws-platform<br/>-3 cert-manager<br/>-2 Load Balancer Controller + agent RBAC<br/>-1 kube-prometheus-stack<br/>0 Grafana dashboards"]
+    wl["6. Owner applies each workload when wanted<br/>kubectl apply -f argocd/workloads/..."]
+    alb["Controller builds one ALB,<br/>locked to your IP"]
+    tf --> kc --> argo --> sec --> root --> wl --> alb
+```
+
+The root app only watches `argocd/apps/` (the platform). The gateway and Promscope live in `argocd/workloads/` and never start unless you apply them (DEV-167, [ADR 0011](../decisions/0011-argocd-install-by-helm.md)).
+
 ## 1. Allow your IP to reach the Kubernetes API
+
+**What this does and why:** the Kubernetes API is the cluster's control door: every `kubectl` command talks to it. It is reachable from the internet, but only from an allow list of addresses. Terraform needs your current IP to write that allow list, and the same IP later decides who can reach the gateway's load balancer.
 
 The cluster's API endpoint is public so the owner can run `kubectl`, but only from the CIDRs in `endpoint_public_access_cidrs`. The variable has no default on purpose, and `0.0.0.0/0` is rejected by validation. If it is not set, Terraform prompts for it.
 
@@ -25,6 +45,8 @@ endpoint_public_access_cidrs = ["<your-ip>/32"]
 If your home IP changes later, `kubectl` times out. Update `terraform.tfvars` and run plan/apply again (an in-place change, about a minute).
 
 ## 2. Plan and apply (owner)
+
+**What this does and why:** Terraform reads the code in `envs/dev` and creates the AWS resources: the network (VPC, one NAT gateway), the EKS cluster and its nodes, the budget alert and the ALB security group. `plan` shows what would change without touching anything; `apply` makes exactly those changes; the second `plan` proves that AWS and the code now agree.
 
 Two things first. Terraform needs `cost_alert_emails`: the project budget in `budget.tf` emails you when spend on resources tagged `Project=aws-platform` passes $30 in the month, and again at $50. Keep it in Doppler as **`COST_ALERT_EMAILS`**, value a Terraform list with straight quotes, e.g. `["you@example.com"]`. `doppler run --name-transformer tf-var` turns it into `TF_VAR_cost_alert_emails`, the exact name Terraform looks for (environment variable names are case-sensitive on macOS). Don't name the Doppler secret `TF_VAR_...`: the transformer adds its own prefix and Terraform prompts for the value. The transformer passes every secret in the Doppler config, and it can't be combined with `--only-secrets` (Doppler rejects it), so no Doppler secret may share a name with an `envs/dev` variable (`REGION`, `NAME`, `VPC_CIDR_BLOCK`, `AZ_COUNT`, `KUBERNETES_VERSION`, `NODE_INSTANCE_TYPE`, `ENDPOINT_PUBLIC_ACCESS_CIDRS`). Alternatively put `cost_alert_emails = [...]` in `terraform.tfvars` and drop the `doppler run` prefix.
 
@@ -54,6 +76,8 @@ rm dev.tfplan
 
 ## 3. Connect kubectl (owner)
 
+**What this does and why:** `kubectl` is the command-line client for the Kubernetes API. It needs two things: the cluster's address and credentials. The command Terraform prints writes both into `~/.kube/config`, and the credentials come from your AWS SSO login. The API only answers your IP (section 1), so this fails from anywhere else.
+
 ```
 terraform output -raw configure_kubectl
 ```
@@ -68,6 +92,8 @@ kubectl get pods -n kube-system
 Expect 2 nodes `Ready` (t3.medium, no external IP) and every kube-system pod `Running`.
 
 ## 4. Install Argo CD and the root app (owner)
+
+**What this does and why:** Argo CD is the robot that copies what is in git into the cluster and keeps it that way. Each thing it manages is an Application (a pointer to a folder or chart in git plus the namespace to put it in); making the cluster match git is a sync. It is installed once with Helm because something must exist before it can manage the rest; after that you hand it the root Application, which deploys the platform. It has no public address, so you reach its web UI with a port-forward (a temporary tunnel from your machine into the cluster, explained in step 4).
 
 Argo CD is installed once per cluster with Helm, then manages everything else from git ([ADR 0011](../decisions/0011-argocd-install-by-helm.md)). Run from the repo root with `kubectl` pointed at the dev cluster.
 
@@ -118,7 +144,7 @@ Argo CD is installed once per cluster with Helm, then manages everything else fr
 
 6. Bootstrap the app-of-apps. The `bootstrap` project limits the root app to creating Applications and AppProjects in `argocd`:
 
-   **First do [section 5](#5-platform-add-ons-owner) step 1 (Grafana Secret) and [section 6](#6-gateway-and-promscope-owner) step 1 (namespaces and pull Secrets).** The root app and its children sync automatically, so kube-prometheus-stack and the apps start as soon as step 6 runs. Without the Grafana Secret, Grafana waits in `CreateContainerConfigError`.
+   **First do [section 5](#5-platform-add-ons-owner) step 1 (Grafana Secret).** The root app and its children sync automatically, so kube-prometheus-stack starts as soon as step 6 runs. Without the Grafana Secret, Grafana waits in `CreateContainerConfigError`. The gateway and Promscope are not part of root; they wait for section 6.
 
    ```
    kubectl apply -f argocd/bootstrap-project.yaml -f argocd/root.yaml
@@ -130,7 +156,9 @@ Argo CD is installed once per cluster with Helm, then manages everything else fr
 
 ## 5. Platform add-ons (owner)
 
-The root app creates three add-on Applications from `argocd/apps/`: cert-manager (`cert-manager`, sync wave -3), which issues the controller's webhook certificate (DEV-166), the AWS Load Balancer Controller (`kube-system`, wave -2) and kube-prometheus-stack (`monitoring`, wave -1). Apps come after them (wave 0).
+**What this does and why:** the add-ons are the shared services the workloads rely on. cert-manager issues TLS certificates; the AWS Load Balancer Controller turns an Ingress (a rule asking for outside HTTP traffic to reach a Service) into an ALB (an AWS Application Load Balancer); kube-prometheus-stack runs Prometheus and Grafana and adds the ServiceMonitor type (a small object telling Prometheus which Service to scrape). The root app deploys them in sync waves (an ordering number: Argo CD waits until every Application in one wave is Healthy before starting the next). All you do here is create the Grafana Secret and check the result.
+
+The root app creates these Applications from `argocd/apps/`: the AppProject `aws-platform` (wave -4), cert-manager (`cert-manager`, wave -3), which issues the controller's webhook certificate (DEV-166), the AWS Load Balancer Controller (`kube-system`, wave -2) with the agent's read-only RBAC (wave -2), kube-prometheus-stack (`monitoring`, wave -1) and the Grafana dashboards ConfigMap (wave 0). Nothing else: the workloads are section 6.
 
 The controller's IAM role and its Pod Identity association are part of `envs/dev`, so step 2's apply already created them. Nothing to do for the controller.
 
@@ -198,45 +226,57 @@ Prometheus keeps 2 days of data on an emptyDir, and Grafana has no volume either
 
 ## 6. Gateway and Promscope (owner)
 
-The root app also creates `sre-inference-gateway` (namespace `gateway`) and `promscope` (namespace `promscope`) from `argocd/apps/`, sync wave 0, after the controller (-2) and kube-prometheus-stack (-1). The gateway's Ingress joins the ALB group `aws-platform-dev`, so the controller builds one internet-facing ALB on port 80. Its security group `aws-platform-dev-gateway-alb` (`envs/dev/gateway-alb.tf`, created by the apply in section 2) allows port 80 only from `endpoint_public_access_cidrs`, so only your IP reaches the gateway (DEV-164). Promscope has no Ingress (ClusterIP only, no authentication). Both images are pinned to a git SHA in the Application's `valuesObject`.
+**What this does and why:** these are the two workloads, the things the platform exists to run. They are kept out of the root app so you choose when each one runs: each `kubectl apply` below creates one Application, and from then on Argo CD syncs it from git like everything else. They pull their images from Docker Hub, so a pull Secret goes into each namespace first. Each is independent: apply only the gateway, only Promscope, or both.
 
-Both Docker Hub repositories are public. The Secret `dockerhub-pull` only lifts anonymous pull rate limits. Both charts reference it through `imagePullSecrets`. If it does not exist, the pods still start: the kubelet logs a warning event on the pod and pulls anonymously. Create it before the first sync anyway.
+`sre-inference-gateway` (namespace `gateway`) and `promscope` (namespace `promscope`) live in `argocd/workloads/`, which the root app does not read. The gateway's Ingress joins the ALB group `aws-platform-dev`, so the controller builds one internet-facing ALB on port 80, and only once the gateway is applied. Its security group `aws-platform-dev-gateway-alb` (`envs/dev/gateway-alb.tf`, created by the apply in section 2) allows port 80 only from `endpoint_public_access_cidrs`, so only your IP reaches the gateway (DEV-164). Promscope has no Ingress (ClusterIP only, no authentication). Both images are pinned to a git SHA in the Application's `valuesObject`.
 
-**Before the first sync:** store a Docker Hub username and an access token (read-only scope) in Doppler as `DOCKERHUB_PULL_USERNAME` and `DOCKERHUB_PULL_TOKEN` (the pull credentials; the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` pair is the push credential used by the image workflows in GitHub Actions).
+Both Docker Hub repositories are public. The Secret `dockerhub-pull` only lifts anonymous pull rate limits. Both charts reference it through `imagePullSecrets`. If it does not exist, the pods still start: the kubelet logs a warning event on the pod and pulls anonymously. Create it before applying anyway.
 
-1. Create the namespaces and the pull Secret in each. The values go from Doppler to `kubectl` through stdin, so they never appear in your terminal, shell history or the process list (`printf` is a builtin). Run it where `doppler setup` points at the config with the secrets (or add `-p <project> -c <config>`):
+**Before the first apply:** store a Docker Hub username and an access token (read-only scope) in Doppler as `DOCKERHUB_PULL_USERNAME` and `DOCKERHUB_PULL_TOKEN` (the pull credentials; the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` pair is the push credential used by the image workflows in GitHub Actions). Section 5 must be done: the platform Applications `Synced` and `Healthy`.
+
+1. Gateway: create the namespace and the pull Secret. The values go from Doppler to `kubectl` through stdin, so they never appear in your terminal, shell history or the process list (`printf` is a builtin). Run it where `doppler setup` points at the config with the secrets (or add `-p <project> -c <config>`):
 
    ```
    kubectl create namespace gateway
-   kubectl create namespace promscope
-   doppler run --only-secrets DOCKERHUB_PULL_USERNAME,DOCKERHUB_PULL_TOKEN -- sh -c 'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_PULL_USERNAME" "$DOCKERHUB_PULL_TOKEN" | kubectl -n gateway create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
-   doppler run --only-secrets DOCKERHUB_PULL_USERNAME,DOCKERHUB_PULL_TOKEN -- sh -c 'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_PULL_USERNAME" "$DOCKERHUB_PULL_TOKEN" | kubectl -n promscope create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
-   ```
-
-   `describe` shows only the key name and size. Expect type `kubernetes.io/dockerconfigjson` and the key `.dockerconfigjson`:
-
-   ```
+   doppler run --only-secrets DOCKERHUB_PULL_USERNAME,DOCKERHUB_PULL_TOKEN -- sh -c \
+   'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_PULL_USERNAME" "$DOCKERHUB_PULL_TOKEN" | kubectl -n gateway create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
    kubectl -n gateway describe secret dockerhub-pull
-   kubectl -n promscope describe secret dockerhub-pull
    ```
 
-   The Applications set `CreateNamespace=true`, which does nothing when the namespace already exists.
+   `describe` shows only the key name and size. Expect type `kubernetes.io/dockerconfigjson` and the key `.dockerconfigjson`.
 
-2. Watch both sync. The two Applications appear only after the root app has created them, which waits for the Load Balancer Controller (wave -2) and kube-prometheus-stack (wave -1) to be Healthy. Wait until the first command lists both, then run the rollout commands:
+2. Apply the gateway Application and watch it:
 
    ```
-   kubectl -n argocd get applications
+   kubectl apply -f argocd/workloads/sre-inference-gateway.yaml
+   kubectl -n argocd get application sre-inference-gateway
    kubectl -n gateway rollout status deployment/sre-inference-gateway
+   kubectl -n gateway get ingress
+   ```
+
+   Expect the Application `Synced` and `Healthy` and the rollout complete. The controller needs about 2-3 minutes to create the ALB after the Ingress appears; its DNS name then shows in the ADDRESS column.
+
+3. Promscope (optional, independent of the gateway): the same pull Secret in its own namespace, then the Application:
+
+   ```
+   kubectl create namespace promscope
+   doppler run --only-secrets DOCKERHUB_PULL_USERNAME,DOCKERHUB_PULL_TOKEN -- sh -c \
+   'printf "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"%s\",\"password\":\"%s\"}}}" "$DOCKERHUB_PULL_USERNAME" "$DOCKERHUB_PULL_TOKEN" | kubectl -n promscope create secret generic dockerhub-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=/dev/stdin'
+   kubectl -n promscope describe secret dockerhub-pull
+   kubectl apply -f argocd/workloads/promscope.yaml
+   kubectl -n argocd get application promscope
    kubectl -n promscope rollout status deployment/promscope
    ```
 
-   The controller needs about 2-3 minutes to create the ALB after the Ingress appears.
+   No ALB for Promscope: it is reached by port-forward (see Verification).
+
+The Applications set `CreateNamespace=true`, which does nothing when the namespace already exists. To remove one workload later: `kubectl -n argocd delete application <name>`. The Applications carry no finalizer, so this removes only the Application and leaves its Deployment, Service and Ingress running; delete the namespace too (`kubectl delete namespace gateway`), and for the gateway wait for the ALB to go before a destroy ([teardown.md](teardown.md)).
 
 ### Release a new image (tag bump)
 
 1. Find the new SHA: the run of the `Image` workflow in the app's GitHub repository (Actions tab, the run for the commit; the tag is the full 40-character commit SHA), or the tag list on Docker Hub (`crypticseeds/sre-inference-gateway`, `crypticseeds/promscope`). Never use `latest`.
-2. Open a PR that changes only `image.tag` (keep the quotes) in `argocd/apps/sre-inference-gateway.yaml` or `argocd/apps/promscope.yaml`. CI lints and renders the charts with test values but does not check the tag, so a mistyped or non-existent SHA still passes and only fails as `ImagePullBackOff` after the sync (the rolling update keeps the old pods running). Before merging, confirm the tag exists on Docker Hub (the Tags page, or `docker manifest inspect crypticseeds/<repo>:<sha>` from the Mac); review and merge.
-3. Argo CD syncs `main` by itself (automated sync, about 3 minutes, or press Refresh in the UI). Check the rollout and the running image:
+2. Open a PR that changes only `image.tag` (keep the quotes) in `argocd/workloads/sre-inference-gateway.yaml` or `argocd/workloads/promscope.yaml`. CI lints and renders the charts with test values but does not check the tag, so a mistyped or non-existent SHA still passes and only fails as `ImagePullBackOff` after the sync (the rolling update keeps the old pods running). Before merging, confirm the tag exists on Docker Hub (the Tags page, or `docker manifest inspect crypticseeds/<repo>:<sha>` from the Mac); review and merge.
+3. Argo CD syncs `main` by itself for any workload Application already applied (automated sync, about 3 minutes, or press Refresh in the UI); there is no need to apply the file again. Check the rollout and the running image:
 
    ```
    kubectl -n gateway rollout status deployment/sre-inference-gateway
@@ -249,7 +289,7 @@ To roll back, revert the PR.
 
 ### Verification (owner, with the agent's read-only MCP)
 
-(a) Both Applications are `Synced` and `Healthy`:
+(a) Each Application you applied is `Synced` and `Healthy`:
 
 ```
 kubectl -n argocd get applications
@@ -264,7 +304,7 @@ kubectl -n promscope get pod -l app.kubernetes.io/name=promscope -o jsonpath='{.
 kubectl -n promscope get pod -l app.kubernetes.io/name=promscope -o jsonpath='{.items[*].spec.containers[0].image}{"\n"}'
 ```
 
-Expect `[{"name":"dockerhub-pull"}]` per pod, and the image tags equal to the `image.tag` in the two Applications.
+Expect `[{"name":"dockerhub-pull"}]` per pod, and the image tags equal to the `image.tag` in the files under `argocd/workloads/`. Skip the Promscope lines if you did not apply it; (c) to (e) need the gateway.
 
 (c) Agent, MCP (`eu-west-2`): `DescribeLoadBalancers` shows exactly one internet-facing `application` load balancer for this cluster. `DescribeTags` (or Resource Groups Tagging `GetResources`) on its ARN shows the `defaultTags` (`Project=aws-platform`, `Application=platform`, `Environment=dev`, `ManagedBy=aws-load-balancer-controller`); `DescribeLoadBalancers` itself returns no tags. `DescribeTargetHealth` on its target group shows every target `healthy`, one per gateway pod. A second ALB means an Ingress is missing `group.name`. `DescribeSecurityGroups` on the ALB's group (`aws-platform-dev-gateway-alb`) shows port 80 open only to your `/32`, never `0.0.0.0/0`.
 
@@ -287,6 +327,8 @@ curl -N -H 'Content-Type: application/json' -d '{"model":"mock-model","messages"
 Promscope is reached only with a port-forward: `kubectl -n promscope port-forward svc/promscope 8090:8090`, then `http://localhost:8090/mcp`. Prometheus targets for both ServiceMonitors can be checked with the port-forward in section 5 (Status, Targets).
 
 ## 7. End of session
+
+**What this does and why:** the environment costs money every hour it runs, so it is destroyed at the end of each session and rebuilt next time. `terraform destroy` removes only what Terraform created. The ALB and its target groups were created by the Load Balancer Controller, not Terraform, so they must be gone first or the VPC cannot be deleted; [teardown.md](teardown.md) has that order.
 
 The environment costs roughly $6-7 a day while it runs, so destroy it when you finish. Review the destroy plan first:
 

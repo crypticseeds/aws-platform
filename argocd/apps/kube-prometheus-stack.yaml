@@ -12,7 +12,7 @@
 # monitoring from Doppler (runbook step 5).
 #
 # Wave -1: the monitoring CRDs (ServiceMonitor, PrometheusRule) must exist
-# before the apps (wave 0) that ship ServiceMonitors.
+# before the workloads (argocd/workloads/, applied by hand) ship ServiceMonitors.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

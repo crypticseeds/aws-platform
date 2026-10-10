@@ -1,6 +1,9 @@
-# Root app-of-apps. Everything under argocd/apps/ becomes an Argo CD resource.
-# Git is the source of truth: a file added there is created, a file removed
-# is pruned, and manual changes in the cluster are reverted.
+# Root app-of-apps for the PLATFORM only: everything under argocd/apps/ (the
+# AppProject, cert-manager, the Load Balancer Controller, agent RBAC,
+# kube-prometheus-stack, dashboards) becomes an Argo CD resource. Git is the
+# source of truth: a file added there is created, a file removed is pruned,
+# and manual changes in the cluster are reverted. Workloads (gateway,
+# Promscope) live in argocd/workloads/ and are applied by hand, one at a time.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

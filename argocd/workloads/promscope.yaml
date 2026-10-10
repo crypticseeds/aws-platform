@@ -10,7 +10,11 @@
 # limits. If it is missing, the kubelet logs a warning event and pulls
 # anonymously, so the pods still start.
 #
-# Wave 0: after the monitoring CRDs (-1), which the ServiceMonitor needs.
+# Workload, not platform: the root app does not pick this file up (it only
+# reads argocd/apps/). The owner applies it by hand when wanted:
+#   kubectl apply -f argocd/workloads/promscope.yaml
+# No sync-wave annotation: waves only order an app-of-apps' children, and the
+# monitoring CRDs its ServiceMonitor needs are already installed by then.
 #
 # To release a new image, change image.tag below in a PR (runbook, section 6).
 apiVersion: argoproj.io/v1alpha1
@@ -18,8 +22,6 @@ kind: Application
 metadata:
   name: promscope
   namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
 spec:
   project: aws-platform
   source:

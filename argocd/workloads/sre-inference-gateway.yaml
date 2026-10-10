@@ -11,8 +11,11 @@
 # limits. If it is missing, the kubelet logs a warning event and pulls
 # anonymously, so the pods still start.
 #
-# Wave 0: after the Load Balancer Controller webhooks (-2) and the monitoring
-# CRDs (-1), which the ServiceMonitor needs.
+# Workload, not platform: the root app does not pick this file up (it only
+# reads argocd/apps/). The owner applies it by hand when wanted:
+#   kubectl apply -f argocd/workloads/sre-inference-gateway.yaml
+# No sync-wave annotation: waves only order an app-of-apps' children, and the
+# platform add-ons are already Healthy before the owner applies this.
 #
 # To release a new image, change image.tag below in a PR (runbook, section 6).
 apiVersion: argoproj.io/v1alpha1
@@ -20,8 +23,6 @@ kind: Application
 metadata:
   name: sre-inference-gateway
   namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
 spec:
   project: aws-platform
   source:
