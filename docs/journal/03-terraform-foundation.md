@@ -1,6 +1,6 @@
 # Terraform foundation: tracking, guardrails, state and the first cluster design
 
-Journal entry 03 for the aws-platform project. Written 2026-10-04, covering the sessions of 2026-10-03 and 2026-10-04. Extended on 2026-10-07 with the work merged between 2026-10-05 and 2026-10-06 (steps 11 to 18), and again later that day with the work of 2026-10-05 to 2026-10-07 (steps 19 to 27, [Appendix C](#appendix-c-interview-stories) and the [reuse guide](../runbooks/reuse-for-a-new-project.md)). This is a living document for the rest of P1 and is finalised at the close-out (DEV-147): see [Draft status](#draft-status-todo-at-close-out). The criteria table is in [03-p1-closeout-table.md](03-p1-closeout-table.md).
+Journal entry 03 for the aws-platform project. Written 2026-10-04, covering the sessions of 2026-10-03 and 2026-10-04. Extended on 2026-10-07 with the work merged between 2026-10-05 and 2026-10-06 (steps 11 to 18), and again later that day with the work of 2026-10-05 to 2026-10-07 (steps 19 to 27, [Appendix C](#appendix-c-interview-stories) and the [reuse guide](../runbooks/reuse-for-a-new-project.md)). Extended on 2026-10-14 with the first full live session of 2026-10-10 (steps 28 and 29, story 7). This is a living document for the rest of P1 and is finalised at the close-out (DEV-147): see [Draft status](#draft-status-todo-at-close-out). The criteria table is in [03-p1-closeout-table.md](03-p1-closeout-table.md).
 
 This records how Seeds (the owner) and the AI agent went from "account secured, no code" to "Terraform repo with safety rails, a live state bucket, and a reviewed VPC + EKS design ready to apply":
 
@@ -20,7 +20,7 @@ Like journals 01 and 02, it is meant to be read three ways: as a blog draft, as 
 - **Safety rails:** `.gitignore` for state, real tfvars, keys, kubeconfigs and plan files; pre-commit with gitleaks, terraform fmt/validate, tflint (AWS ruleset), trivy and yamllint. The gitleaks hook was proven to block a staged fake token.
 - **State:** one account-wide S3 bucket (`aws-platform-tfstate-...`, tagged `Scope=shared`) with versioning, SSE-S3, Block Public Access, a TLS-only policy, 30-day retention of old versions and **S3-native locking** (no DynamoDB). Bootstrapped with local state, then migrated into itself. The agent was proven unable to read state.
 - **Strategy:** one bucket, one state key per project and layer (`<project>/<env>/...`). Tags `Project`, `Application`, `Environment`, `ManagedBy`, `Repository` on everything. Layers: `bootstrap/` (account), `envs/<env>/` (shared platform), `apps/<app>/<env>/` (app-owned AWS resources).
-- **Dev platform (applied and destroyed on 2026-10-04, not running now):** VPC across 3 AZs, private /20s for nodes, public /24s, one NAT gateway, a free S3 gateway endpoint; EKS 1.36 with access entries only, Pod Identity, AWS-owned envelope encryption, public endpoint limited to the owner's IP, two `t3.medium` nodes. The first apply and a clean 61-resource destroy are in the verification table. Everything added since (Argo CD, the add-ons, the two apps) has never run on a cluster.
+- **Dev platform (not running now):** VPC across 3 AZs, private /20s for nodes, public /24s, one NAT gateway, a free S3 gateway endpoint; EKS 1.36 with access entries only, Pod Identity, AWS-owned envelope encryption, public endpoint limited to the owner's IP, two `t3.medium` nodes. First applied and destroyed on 2026-10-04 (61 resources). On 2026-10-10 the full stack (69 resources, Argo CD, the add-ons, both apps behind one ALB) ran for the first time, was verified and was torn down with a clean leak check (step 28). The gateway dashboard did not show in Grafana and is still open (DEV-144).
 - **Next direction:** Argo CD on the owner's Raspberry Pi 5 k3s cluster as a hub, and a private-only EKS endpoint over Tailscale (DEV-155).
 
 ### What exists now
@@ -437,6 +437,73 @@ The Linear GitHub integration closes an issue when its PR merges. Six issues wer
 - No `rm -rf`. Deletions are listed for the owner to run.
 - Never `git add -A`: the sandbox creates placeholder files. Stage by explicit path.
 
+### 28. The first full live session (2026-10-10)
+
+**Why:** everything since step 11 had only been checked offline. This was the first time the whole stack ran: Terraform, Argo CD, the add-ons, both apps behind an ALB, and the teardown. Times below are UTC.
+
+**1. Plan.**
+
+- The first plan on the owner's Mac said 67 to add. The Mac checkout was at PR #18 (`ec1a136`), before the budget (#27) and the ALB security group (#29). An old checkout plans old code.
+- After `git pull` to `2d66c6c`: `Plan: 69 to add, 0 to change, 0 to destroy`. This matched the full CI job log and an agent plan on empty local state, name by name.
+- The handoff had said "42/43". That number came from the CI plan PR comment, which was cut off at 60 KB. A truncated comment is not a count.
+- `cost_alert_emails` came from Doppler: secret `COST_ALERT_EMAILS`, run with `doppler run --name-transformer tf-var -- terraform ...`. The transformer turns the name into `TF_VAR_cost_alert_emails`. Terraform reads `TF_VAR_<exact variable name>`, and environment variable names are case-sensitive. A secret named `TF_VAR_COST_ALERT_EMAILS` became `TF_VAR_tf_var_cost_alert_emails`, so Terraform prompted for the value. `--only-secrets` cannot be combined with the transformer (Doppler returns an error; tested).
+- A plan left waiting at that prompt still held the S3 state lock. The next plan failed with `Error acquiring the state lock` (412 PreconditionFailed), and the lock's Who was the owner's Mac. Stopping the waiting run released it. `force-unlock` is only safe when no Terraform runs anywhere.
+
+**2. Apply, a failure, and the fix.**
+
+- The apply failed on `aws_security_group.gateway_alb` with `InvalidParameterValue: Invalid security group description`. The description contained an apostrophe ("owner's"). AWS allows only `a-zA-Z0-9`, space and `._-:/()#,@[]+=&;{}!$*` there.
+- Plan, validate and checkov cannot catch this. Only AWS checks it, at create time.
+- Fixed in PR #31. Everything else had already been created by the failed apply, so the re-plan said `1 to add`, and the apply completed.
+- Background from the PR #29 review: Checkov flagged CKV_AWS_260 on that group, because the CIDR variable is sensitive and unresolved in CI. Instead of skipping the rule, CI now passes a documentation CIDR (`203.0.113.10/32`) with `--var-file`. It was tested that `0.0.0.0/0` still fails. Only CKV2_AWS_5 is skipped, because the controller attaches the group outside Terraform.
+
+**3. Argo CD.**
+
+- `helm install` failed with `no chart version found for argo-cd-10.9.6`. The local repo index was stale; 10.9.6 is in the live index. `helm repo update argo` fixed it.
+- The Slack secret command broke when the terminal wrapped it over two lines. Splitting it with `\` fixed it.
+- The Argo CD UI is reached on `https://localhost:8080` through `kubectl port-forward`. `argocd-server` is ClusterIP only, with no public address. The tunnel goes through the EKS API, which only the owner's IP can reach.
+- Grafana is plain `http` on `localhost:3000`. The browser carried `https` over and failed with `SSL_ERROR_RX_RECORD_TOO_LONG`.
+
+**4. Secrets, then root.**
+
+- `root.yaml` auto-syncs. So the Grafana admin Secret and the pull Secrets must exist before root is applied, or the apps start without them. The runbook had them in the wrong order; fixed in PR #32.
+
+**5. The webhook certificate failure (DEV-166).**
+
+- The gateway Ingress was rejected: `failed calling webhook "vingress.elbv2.k8s.aws": x509: certificate signed by unknown authority ("aws-load-balancer-controller-ca")`.
+- Cause: the aws-load-balancer-controller 3.5.0 chart generates a new CA on every render (`genCA`). Helm's `lookup` would normally keep the old one, but it does not work under Argo CD.
+- Argo created the app at 18:04:52. Then, at 18:04:58 to 18:05:02, it self-healed the TLS Secret and both webhook configurations with a fresh render. The webhooks now trusted a new CA while the controller still served the old certificate.
+- An ignore rule on `caBundle` (jq path, with `RespectIgnoreDifferences`) did not prevent it.
+- Fix (PR #33, merged `d9f0a49`): cert-manager v1.21.2 as an Argo app at sync wave -3, and `enableCertManager: true` on the controller. cert-manager now owns the certificate, so a re-render no longer changes it.
+- Live: cert-manager Synced/Healthy at 18:33:14, the controller at 18:33:23, both webhooks annotated `inject-ca-from`. The gateway's automatic retries were used up, so it needed a manual re-sync; it succeeded at 18:42:06.
+
+**6. Verification.** Details are in [Verification evidence](#verification-evidence). In short:
+
+- Exactly one ALB, internet-facing, open on port 80 to one /32 only; 2/2 targets healthy; project tags present.
+- From the Pi (same public IP as the allowed /32): `/v1/health` 200, a streaming request ending `data: [DONE]`, and bursts of 60/60 and 153/153 chat completions with 200. A phone on mobile data timed out, as it should.
+- Images match the pinned SHAs; all 4 app pods Ready with `dockerhub-pull`.
+- Agent RBAC: pods yes, Secrets Forbidden.
+- Prometheus: both targets of each app up. Promscope check passed.
+- Second `terraform plan`: `No changes.`
+- **Not verified:** the gateway dashboard did not show in Grafana, although the `grafana-dashboards` Application was Synced/Healthy. The agent asked the owner to look for it without checking first. Still open (DEV-144).
+
+**7. Teardown.**
+
+- Order: delete `root` (it has no finalizer, so the apps stay), turn auto-sync off on all apps, delete the Ingresses. The ALB, its target group and the controller's security group were gone by 19:41:03, in under a minute.
+- Then Argo CD and the add-ons were removed, and `terraform destroy` ran.
+- Leak check about 19:57: `PASS: nothing left` (load balancers, target groups, NAT, EIPs, ENIs, unattached EBS, VPC all 0). The budget, the controller IAM role, the EKS log group and the gateway security group were also gone.
+- **Why this order** (reasoned, not observed): a bare `terraform destroy` would delete the cluster and the controller first. The ALB would be orphaned. The gateway security group, subnets, IGW and VPC would fail with `DependencyViolation`. The ALB would keep billing at $0.02646 an hour in eu-west-2 (AWS price list) until someone cleaned it up by hand.
+
+### 29. What the owner asked to change
+
+The owner's feedback on the session, plainly:
+
+- **Explain first.** The agent gave commands without saying what they did. The deploy and teardown runbooks now open each section with "What this does and why".
+- **Check before asserting.** The agent assumed outcomes it had not checked, such as the dashboard being there.
+- **Ask before design choices.** The agent deployed all seven apps at once through the app-of-apps without asking. DEV-167 (PR #34, merged after the teardown) changed this: `root` deploys only the platform. The gateway and Promscope live in `argocd/workloads/` and are applied by hand. Future sessions deploy only the apps a test needs.
+- **Keep the tracker accurate.** The agent's progress checklist went stale (wrong plan count, parked steps). It was rebuilt from the runbook. A tracker is only useful if it is accurate.
+- **Plans in public.** Full Terraform plans had been posted as public PR comments and printed in public job logs. DEV-165 (PR #30) now posts only the counts line and the `action address` lines, never attribute values. The full plan stays in a runner file that is deleted. Existing comments were left as they are (owner decision).
+- **Auto-close again.** Merged PRs closed DEV-147 and DEV-167 in Linear; both were reopened. DEV-164, DEV-165 and DEV-166 are Done.
+
 ## Best practices learned
 
 Each topic: what it is, how it works, common problems, best practice, and what this project chose.
@@ -564,6 +631,19 @@ The bigger point: in mature teams, people rarely run `kubectl` against productio
 - **A tag filter on a budget does nothing until the tag is activated in Billing.** `Project` was `Inactive` on 2026-10-07 (step 22).
 - **`/tmp` is RAM on the Pi.** Provider caches and pre-commit environments there pushed the machine into swap (step 25).
 - **A merged PR closes the Linear issue.** Reopen it if nothing was applied or run (step 26).
+- **An unpulled checkout plans old code.** The Mac was at PR #18 and planned 67 resources; after `git pull` it was 69. Pull before you plan (step 28).
+- **A truncated PR comment misled the expected count.** The CI plan comment is cut at 60 KB, so "42/43" was wrong. Count from the full job log (step 28).
+- **Doppler's `tf-var` transformer adds the prefix itself.** Name the secret `COST_ALERT_EMAILS`, not `TF_VAR_COST_ALERT_EMAILS`, or you get `TF_VAR_tf_var_cost_alert_emails` and a prompt. `--only-secrets` cannot be combined with it (step 28).
+- **A plan waiting at a prompt holds the state lock.** The next plan failed with 412 PreconditionFailed. Stop the waiting run; use `force-unlock` only when nothing runs anywhere (step 28).
+- **Security group descriptions have a narrow character set.** An apostrophe failed the apply with `Invalid security group description`. Plan, validate and checkov cannot see it. Fixed in PR #31 (step 28).
+- **A stale Helm repo index hides new chart versions.** `no chart version found` until `helm repo update argo` (step 28).
+- **Terminal line wrap breaks long commands.** Split them with `\` (step 28).
+- **Port-forwards are http unless the service says otherwise.** Grafana on `localhost:3000` is http; https gives `SSL_ERROR_RX_RECORD_TOO_LONG`. Argo CD on 8080 is https (step 28).
+- **Create Secrets before an auto-syncing root.** Root syncs at once, so the Secrets it needs must exist first. Runbook fixed in PR #32 (step 28).
+- **A chart that generates its webhook CA fights Argo's self-heal.** The load balancer controller chart made a new CA on each render; Argo re-applied it and the webhook stopped trusting the controller. cert-manager now owns the certificate (DEV-166, PR #33, step 28).
+- **An app-of-apps deploys everything at once.** That took the choice away from the owner. Root now deploys only the platform; workloads are applied by hand (DEV-167, step 29).
+- **Synced/Healthy does not prove the user-visible result.** `grafana-dashboards` was Synced/Healthy and the dashboard was not visible. Check what the user sees (DEV-144, step 28).
+- **Full plans in public comments and logs are too much.** DEV-165 posts only counts and `action address` lines (step 29).
 
 ## Verification evidence
 
@@ -614,20 +694,32 @@ Only items actually checked are listed as verified.
 | Budget code | `fmt`, `init`, `validate`, throwaway tag-filter and email checks, CI `envs/dev` plan on PR #27 | passed (the alert itself has not fired) |
 | Argo apps and charts, offline | `helm template`, `helm lint --strict`, `kubeconform -strict` (DEV-143 comment) | lint 0 failed; 8 valid, 0 invalid, 2 skipped; exactly one Ingress; Promscope has none |
 | Real-app review | gateway run from the pinned commit, Promscope built at its pinned commit, kube-prometheus-stack 91.9.0 rendered (DEV-143 comment) | no blocking issue; port, probe, stream (5 events ending `data: [DONE]`), dashboard metric names and `promscope-mcp-check.sh` confirmed; four mistakes fixed (step 24) |
+| Plan count, 2026-10-10 | owner plan on the Mac after `git pull` to `2d66c6c`, compared with the CI job log and an agent plan on empty state | `Plan: 69 to add, 0 to change, 0 to destroy`, same resources by name |
+| Apply completed | owner apply after the PR #31 fix | re-plan `1 to add`; apply completed |
+| Webhook certificate fix (DEV-166) | Argo app status after PR #33 | cert-manager Synced/Healthy 18:33:14, controller 18:33:23, both webhooks annotated `inject-ca-from`; gateway sync succeeded 18:42:06 after a manual re-sync |
+| One ALB, locked down (DEV-164) | agent read-only ELB and EC2 reads | exactly one ALB, internet-facing, active; groups `aws-platform-dev-gateway-alb` (inbound only TCP 80 from one /32, egress VPC CIDR) and the controller's backend group (no inbound); 2/2 targets healthy on port 8000; `Project`, `Application`, `Environment`, `ManagedBy`, `Repository` tags present |
+| Gateway end to end (DEV-143) | requests from the Pi (same public IP as the allowed /32, compared without printing) | `/v1/health` 200 in 0.17 s; streaming 6 `data:` lines ending `data: [DONE]` at 18:43:56; bursts 60/60 and 153/153 chat completions 200 |
+| ALB closed to others | owner, phone on mobile data | timed out |
+| Images and pull secret (DEV-143) | owner `kubectl` | gateway `eb87ca19827c5d041cfe8103c3c5de377feee425`, Promscope `26707945e5109f76cbe71a2934b9a521644a2a1e`, matching the Argo apps; all 4 pods Ready with `imagePullSecrets` `dockerhub-pull` |
+| Agent RBAC on a cluster (DEV-136) | agent EKS MCP | listing pods works; listing Secrets `Forbidden`; cert-manager Certificate objects not readable either; the MCP masks image tags |
+| No other public services (DEV-141, DEV-142) | agent list of Services in monitoring, argocd, gateway, promscope, kube-system | 21 services, none LoadBalancer or NodePort; controller logs 0 `AccessDenied` |
+| Scrape targets and Promscope (DEV-144) | owner, Prometheus targets page and `promscope-mcp-check.sh` | 2 gateway + 2 Promscope targets up, empty lastError; `OK: initialize, tools/list and query_metrics(up) succeeded, 25 series` |
+| Node headroom (DEV-142) | owner `kubectl top nodes`, all add-ons and both apps | 73m (3%) / 1342Mi (40%) and 93m (4%) / 1974Mi (59%) |
+| envs/dev idempotent, full stack | owner's second `terraform plan` | `No changes.` |
+| Full teardown with Argo and an ALB (DEV-145) | runbook order, then agent leak check | ALB, target group, controller group at 0 by 19:41:03; `PASS: nothing left` about 19:57; budget, controller role, EKS log group, gateway group gone |
+| Project cost tag | Billing | `Project` cost allocation tag Active since 2026-10-07 21:02Z |
 
 **NOT YET VERIFIED:**
 
 - the agent's EKS MCP calls appearing in CloudTrail;
 - the `aws-admin-logout` function leaving the agent session intact;
-- the agent's Kubernetes RBAC (no Secrets) on a real cluster (DEV-136): the access entry only reaches AWS at the next `envs/dev` apply;
-- Argo CD syncing `root` to Synced/Healthy, and the load balancer controller, kube-prometheus-stack and metrics-server running (DEV-141, DEV-142);
-- the gateway and Promscope running behind the ALB (DEV-143): Applications Synced and Healthy, the `dockerhub-pull` Secret, exactly one ALB with healthy targets, `/v1/health` 200, the streaming request, the tag bump through a PR;
-- the observability wiring on a cluster (DEV-144): both targets of each app up in Prometheus, the gateway dashboard loading, the Promscope MCP check;
-- the project budget alerting (DEV-126): needs the `Project` tag activated and a day of tag data;
+- the gateway dashboard in Grafana (DEV-144): login worked, the `grafana-dashboards` Application was Synced/Healthy, but the dashboard was not visible. An offline check on 2026-10-14 found the sidecar label `grafana_dashboard="1"`, `NAMESPACE=ALL`, the ClusterRole (get/watch/list configmaps), the provider path `/tmp/dashboards` and the datasource uid `prometheus` all matching the ConfigMap. The cause is unknown; it must be checked live. It should load automatically, with no manual import;
+- the image tag bump through a PR (DEV-143);
+- DEV-167's staged deploy (platform from root, workloads by hand) on a fresh deploy;
+- the project budget alerting (DEV-126): the `Project` tag is now active, but the alert has not fired;
 - the `account/` imports from PR #24 applied, and a second plan printing `No changes.`;
-- the teardown runbook run end to end with Argo and an ALB present (DEV-145 wrote it; only the earlier 61-resource destroy was observed);
-- real cost numbers: `docs/cost.md` holds an estimate and a placeholder for actuals;
-- Definition of Done item 9 (no project resource missing `Project`, via the tagging API): cost allocation tags are not activated yet (DEV-126).
+- real cost numbers for the 2026-10-10 session: not yet in Cost Explorer when last read (see Cost);
+- Definition of Done item 9 (no project resource missing `Project`, via the tagging API): the tag is active now, but the tagging API check has not been run.
 
 ## Cost
 
@@ -636,6 +728,8 @@ Only items actually checked are listed as verified.
 - **envs/dev while running (estimate, not measured):** roughly $6-7 a day for the EKS control plane, two `t3.medium` nodes and the NAT gateway, plus data. That is why the environment is destroyed at the end of every session.
 - **Avoided by design:** a customer-managed KMS key (about $1/month each, plus one left pending deletion per destroy), a DynamoDB lock table, AWS Client VPN.
 - Actual spend will be recorded from Cost Explorer in `docs/cost.md` (DEV-146).
+- **First reading (Cost Explorer, October to 2026-10-10):** $0.79 for the whole account. Route 53 $0.50, tax $0.13, the 2026-10-04 cluster $0.13, S3 $0.03.
+- **The 2026-10-10 session:** not yet in Cost Explorer at that reading (it lags up to a day). Estimated $1 to $1.50 for about 3 hours up, **unverified**. Actuals pending.
 
 ## Cheat sheet
 
@@ -703,29 +797,33 @@ For a second project, use the [reuse guide](../runbooks/reuse-for-a-new-project.
 
 ## Open items and next steps
 
-- **DEV-143 / DEV-144:** the gateway and Promscope Argo Applications (PR #21) and the observability wiring (PR #22) are merged. Nothing has run on a cluster yet, and the owner's decision on who may reach the ALB is pending (step 24). Not verified live.
-- **Live checks for merged work:** DEV-136 (agent RBAC), DEV-141 and DEV-142 (Argo root, add-ons) need a running cluster. See [NOT YET VERIFIED](#verification-evidence).
+- **DEV-144:** the gateway dashboard did not show in Grafana on 2026-10-10. Offline config looks right; check live on the next deploy (see NOT YET VERIFIED).
+- **DEV-167:** the staged deploy (root deploys the platform only, workloads by hand) is merged but not yet proven on a fresh deploy.
+- **DEV-143:** the image tag bump through a PR is still to test. Everything else for DEV-143 was verified on 2026-10-10.
+- **Live checks for DEV-136, DEV-141, DEV-142:** done on 2026-10-10 (step 28).
 - **DEV-147:** this close-out. The criteria table is a draft in [03-p1-closeout-table.md](03-p1-closeout-table.md).
-- **DEV-126:** the project cost alert is in code (`envs/dev/budget.tf`: emails at $30 and $50 a month of `Project=aws-platform` spend; it replaces the deferred $50/$100 plan). It needs the `Project` cost allocation tag activated in Billing, once, by the owner; that was verified Inactive on 2026-10-07. The other four tags are optional (grouping in Cost Explorer).
+- **DEV-126:** the project cost alert is in code (`envs/dev/budget.tf`: emails at $30 and $50 a month of `Project=aws-platform` spend). The `Project` cost allocation tag is Active since 2026-10-07 21:02Z. Waiting for the owner's review; the alert has not fired.
+- **DEV-129:** owner console steps still to do.
 - **DEV-155:** Argo CD on the Pi 5 k3s hub, private EKS endpoint over Tailscale, machine identity; check `10.20.0.0/16` does not overlap the home LAN or tailnet routes. Backlog; DEV-141 runs Argo on EKS for now.
 - **DEV-125:** Docker Hub namespace is in use; Doppler names and domain still open.
 - **DEV-134 (not a gate):** codify the account baseline in Terraform.
 - **PR #24 (DEV-134 slice 1):** merged. The CloudTrail and Access Analyzer imports only take effect when the owner applies `account/` ([runbook](../runbooks/account.md)); no apply was seen in the sources read for this entry, so treat the baseline as **not yet in state**. The `import {}` blocks can be removed in a later PR after the apply.
-- **Project cost tag:** the `Project` cost allocation tag is `Inactive` in Billing (checked read-only 2026-10-07), so the DEV-126 budget cannot alert until the owner activates it (step 22).
-- **Public ALB exposure (owner decision):** the gateway Ingress is open to the internet on port 80 and would publish `/metrics`, `/docs`, `/openapi.json` and health details. Options are an address allowlist supplied outside the repo, or a path restriction (step 24).
+- **Public ALB exposure:** decided and done in DEV-164. The ALB security group allows TCP 80 from one /32 only, supplied outside the repo (verified 2026-10-10).
+- **Future sessions:** deploy only the apps a test needs (owner request, step 29).
 - **Optional review follow-ups, not done:** readiness probe on `/v1/ready` instead of `/v1/health`, and excluding health and metrics from the app's trace output (DEV-143 comment).
 - **Owner housekeeping:** delete `docs/owner-inputs.md` and `docs/account-setup-guide.md` (superseded); the LICENSE copyright line was left as is for now.
 
 ## Draft status (TODO at close-out)
 
-Only the sections below remain for the real close-out (DEV-147). They are listed, not written, because they depend on DEV-143 and DEV-144 and on live evidence that does not exist yet.
+Only the sections below remain for the real close-out (DEV-147).
 
-- TODO at close-out: the live results for DEV-143 and DEV-144 and the NOT YET VERIFIED items above
-- TODO at close-out: the final repeat-from-scratch checklist (steps 10 to 13 above were added for steps 12 to 27; the owner still has to confirm them on a real rebuild)
-- TODO at close-out: first-week cost actuals from Cost Explorer
-- TODO at close-out: the destroy-or-keep decision and its leak check
+- TODO at close-out: the DEV-144 dashboard result and the remaining NOT YET VERIFIED items above
+- TODO at close-out: the final repeat-from-scratch checklist, confirmed on a fresh deploy with the DEV-167 staged flow
+- TODO at close-out: cost actuals for the 2026-10-10 session from Cost Explorer
 - TODO at close-out: a fresh social post draft and blog titles for the whole phase (Appendix A and B cover the 2026-10-04 part only)
 - TODO at close-out: owner confirmation of the P1 criteria table
+
+Done since the last draft: the live results for DEV-136, DEV-141, DEV-142, DEV-143 (except the tag bump) and DEV-164, and the destroy with its leak check (2026-10-10, step 28).
 
 ## References
 
@@ -766,7 +864,7 @@ Only the sections below remain for the real close-out (DEV-147). They are listed
 
 ## Appendix C: interview stories
 
-Six short stories, each from this phase, each backed by evidence in this document. Told in plain language. Nothing here claims more than was verified.
+Seven short stories, each from this phase, each backed by evidence in this document. Told in plain language. Nothing here claims more than was verified.
 
 ### 1. Secretless CI to AWS, and proving it is read-only
 
@@ -809,3 +907,10 @@ Six short stories, each from this phase, each backed by evidence in this documen
 - **What I did:** reopened them with a comment naming the criteria that had no evidence, and started marking every claim in the journal as verified or UNVERIFIED with the method used.
 - **Evidence:** the verification table lists the command and result per row, and a separate list of what is not yet verified (the whole running cluster, most of it).
 - **Differently:** turn off auto-close for issues that need an apply, so the tracker cannot say Done early.
+
+### 7. A certificate that changed under me
+
+- **Situation:** on the first full deploy, the gateway Ingress was rejected: `x509: certificate signed by unknown authority ("aws-load-balancer-controller-ca")`. The cluster was running and costing money by the hour.
+- **What I did:** read the timeline. Argo created the controller app at 18:04:52 and self-healed its TLS Secret and both webhook configurations six seconds later with a fresh render. The chart generates a new CA on every render, and Helm's `lookup` does not work under Argo. So the webhooks trusted a new CA while the controller served the old certificate. An ignore rule on `caBundle` had not helped. I moved certificate ownership to cert-manager (an Argo app at wave -3, `enableCertManager: true` on the controller, PR #33).
+- **Result:** cert-manager and the controller were Synced/Healthy within ten seconds of each other, both webhooks carried `inject-ca-from`, and the gateway synced after one manual re-sync (its automatic retries were used up). The ALB came up with healthy targets.
+- **What I learned:** a chart that generates secrets at render time and a GitOps tool that re-renders and self-heals will fight. Give the secret a single owner that lives in the cluster.
