@@ -499,7 +499,7 @@ The owner's feedback on the session, plainly:
 
 - **Explain first.** The agent gave commands without saying what they did. The deploy and teardown runbooks now open each section with "What this does and why".
 - **Check before asserting.** The agent assumed outcomes it had not checked, such as the dashboard being there.
-- **Ask before design choices.** The agent deployed all seven apps at once through the app-of-apps without asking. DEV-167 (PR #34, merged after the teardown) changed this: `root` deploys only the platform. The gateway and Promscope live in `argocd/workloads/` and are applied by hand. Future sessions deploy only the apps a test needs.
+- **Ask before design choices.** The agent deployed all seven apps at once through the app-of-apps without asking. DEV-167 (PR #34, merged after the teardown) changed this: `root` deploys only the platform. The gateway and Promscope live in `argocd/workloads/` and are applied by hand, only when a session works on them. On 2026-10-14 the owner considered also applying each platform piece by hand and chose to keep the platform as one unit: testing the gateway needs almost all of it anyway (Prometheus for its ServiceMonitor, the controller and cert-manager for the ALB).
 - **Keep the tracker accurate.** The agent's progress checklist went stale (wrong plan count, parked steps). It was rebuilt from the runbook. A tracker is only useful if it is accurate.
 - **Plans in public.** Full Terraform plans had been posted as public PR comments and printed in public job logs. DEV-165 (PR #30) now posts only the counts line and the `action address` lines, never attribute values. The full plan stays in a runner file that is deleted. Existing comments were left as they are (owner decision).
 - **Auto-close again.** Merged PRs closed DEV-147 and DEV-167 in Linear; both were reopened. DEV-164, DEV-165 and DEV-166 are Done.
@@ -809,7 +809,7 @@ For a second project, use the [reuse guide](../runbooks/reuse-for-a-new-project.
 - **DEV-134 (not a gate):** codify the account baseline in Terraform.
 - **PR #24 (DEV-134 slice 1):** merged. The CloudTrail and Access Analyzer imports only take effect when the owner applies `account/` ([runbook](../runbooks/account.md)); no apply was seen in the sources read for this entry, so treat the baseline as **not yet in state**. The `import {}` blocks can be removed in a later PR after the apply.
 - **Public ALB exposure:** decided and done in DEV-164. The ALB security group allows TCP 80 from one /32 only, supplied outside the repo (verified 2026-10-10).
-- **Future sessions:** deploy only the apps a test needs (owner request, step 29).
+- **Future sessions:** the platform comes up as one unit; apply only the workloads a session works on (owner decision 2026-10-14, step 29).
 - **Optional review follow-ups, not done:** readiness probe on `/v1/ready` instead of `/v1/health`, and excluding health and metrics from the app's trace output (DEV-143 comment).
 - **Owner housekeeping:** delete `docs/owner-inputs.md` and `docs/account-setup-guide.md` (superseded); the LICENSE copyright line was left as is for now.
 
